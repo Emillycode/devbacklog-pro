@@ -1,0 +1,6 @@
+{
+  "name": "Backlog & Ideias - Gestor PHP Puro",
+  "description": "Aplicação web completa em PHP puro para gerenciamento de ideias e backlog organizados por projetos, com persistência JSON e interface dark mode profissional.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

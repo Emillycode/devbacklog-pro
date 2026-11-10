@@ -1,0 +1,27 @@
+# Dependências e builds
+node_modules/
+build/
+dist/
+coverage/
+
+# Arquivos de Ambiente e Credenciais (NUNCA versionar no Git)
+.env
+.env.*
+!.env.example
+
+# Dados locais e configurações de autenticação
+data.json
+auth_config.json
+test_data.json
+test_auth.json
+*.bak
+*.sql.gz
+
+# Uploads locais de mídia (mantém apenas a proteção .htaccess)
+uploads/*
+!uploads/.htaccess
+
+# Sistema e Logs
+.DS_Store
+Thumbs.db
+*.log

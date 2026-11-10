@@ -1,0 +1,24 @@
+# Priorizar index.php sobre index.html no Apache (WAMP / Render)
+DirectoryIndex index.php index.html
+
+# Desabilitar listagem de diretórios
+Options -Indexes
+
+# Bloquear acesso HTTP direto a arquivos sensíveis (.env, .git, JSONs, SQL, Docker e configs)
+<FilesMatch "^(\.env.*|\.git.*|\.dockerignore|Dockerfile|render\.yaml|data\.json|auth_config\.json|test_data\.json|package\.json|package-lock\.json|tsconfig\.json|vite\.config\.ts|.*\.sql)$">
+    <IfModule mod_authz_core.c>
+        Require all denied
+    </IfModule>
+    <IfModule !mod_authz_core.c>
+        Order allow,deny
+        Deny from all
+    </IfModule>
+</FilesMatch>
+
+# Cabeçalhos adicionais de segurança HTTP
+<IfModule mod_headers.c>
+    Header set X-Content-Type-Options "nosniff"
+    Header set X-Frame-Options "SAMEORIGIN"
+    Header set Referrer-Policy "strict-origin-when-cross-origin"
+    Header set X-XSS-Protection "1; mode=block"
+</IfModule>
