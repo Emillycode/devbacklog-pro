@@ -12,8 +12,6 @@ import {
   Menu,
   X,
   Calendar,
-  Code2,
-  Copy,
   Check,
   Settings,
   Image as ImageIcon,
@@ -27,17 +25,14 @@ import {
   List,
   Lock,
   Unlock,
-  ShieldCheck,
   KeyRound,
   Download,
   Upload,
   AlertTriangle,
   Clock,
-  ArrowRight,
   ArrowLeft,
   Play,
-  RotateCcw,
-  Database
+  RotateCcw
 } from 'lucide-react';
 import {
   type Projeto,
@@ -147,7 +142,7 @@ const INITIAL_TASKS: Tarefa[] = [
     id: 'task_3',
     id_projeto: 'proj_api',
     titulo: 'Validação segura de uploads de fotos e vídeos com player HTML5',
-    descricao_detalhada: 'Gravação demonstrando o upload seguro para a pasta local uploads/ com visualização sob demanda.',
+    descricao_detalhada: 'Gravação demonstrando o upload seguro com visualização sob demanda.',
     prioridade: 'Média',
     status: 'concluido',
     data_limite: new Date(Date.now() + 86400000 * 3).toISOString().split('T')[0],
@@ -157,83 +152,87 @@ const INITIAL_TASKS: Tarefa[] = [
 ];
 
 export default function App() {
-  // Customization States
+  // Customization States with localStorage persistence
   const [theme, setTheme] = useState<ThemeMode>(() => {
-    const saved = localStorage.getItem('app_theme');
-    return saved === 'light' || saved === 'dark' ? saved : 'dark';
+    try {
+      const saved = localStorage.getItem('app_theme');
+      if (saved === 'light' || saved === 'dark') return saved;
+    } catch {
+      // ignore storage errors
+    }
+    return 'dark';
   });
 
   const [fontSize, setFontSize] = useState<FontSize>(() => {
-    const saved = localStorage.getItem('app_font_size');
-    return saved === 'small' || saved === 'large' ? saved : 'medium';
+    try {
+      const saved = localStorage.getItem('app_font_size');
+      if (saved === 'small' || saved === 'medium' || saved === 'large') return saved;
+    } catch {
+      // ignore storage errors
+    }
+    return 'medium';
   });
 
   const [fontFamily, setFontFamily] = useState<FontFamily>(() => {
-    const saved = localStorage.getItem('app_font_family');
-    if (
-      saved === 'Helvetica / Arial' ||
-      saved === 'Montserrat' ||
-      saved === 'Roboto' ||
-      saved === 'Open Sans / Lato'
-    ) {
-      return saved;
+    try {
+      const saved = localStorage.getItem('app_font_family');
+      if (
+        saved === 'Helvetica / Arial' ||
+        saved === 'Montserrat' ||
+        saved === 'Roboto' ||
+        saved === 'Open Sans / Lato'
+      ) {
+        return saved;
+      }
+    } catch {
+      // ignore storage errors
     }
     return 'Roboto';
   });
 
   const [viewMode, setViewMode] = useState<ViewMode>(() => {
-    const saved = localStorage.getItem('app_view_mode');
-    return saved === 'list' || saved === 'kanban' ? saved : 'kanban';
+    try {
+      const saved = localStorage.getItem('app_view_mode');
+      if (saved === 'list' || saved === 'kanban') return saved;
+    } catch {
+      // ignore
+    }
+    return 'kanban';
   });
 
-  // Security & Backend Sync States
+  // Backend & Auth States
   const [backendConnected, setBackendConnected] = useState<boolean>(false);
-  const [supabaseConfigured, setSupabaseConfigured] = useState<boolean>(false);
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(true);
-  const [requireAuth, setRequireAuth] = useState<boolean>(true);
-  const [isDefaultPassword, setIsDefaultPassword] = useState<boolean>(true);
   const [csrfToken, setCsrfToken] = useState<string>('');
   const [loginEmail, setLoginEmail] = useState<string>('');
   const [loginInput, setLoginInput] = useState<string>('');
   const [loginError, setLoginError] = useState<string>('');
   const [isLoadingAuth, setIsLoadingAuth] = useState<boolean>(true);
-  const [syncingSupabase, setSyncingSupabase] = useState<boolean>(false);
 
-  // Settings Modal Security Tab States
-  const [settingsTab, setSettingsTab] = useState<'visual' | 'security'>('visual');
-  const [secCurrentPass, setSecCurrentPass] = useState<string>('');
-  const [secNewPass, setSecNewPass] = useState<string>('');
-  const [secNewPin, setSecNewPin] = useState<string>('');
-  const [secFeedback, setSecFeedback] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
-
-  // Track expanded media per task (files are NOT exposed initially)
-  const [expandedMediaIds, setExpandedMediaIds] = useState<Record<string, boolean>>({});
-
-  // Settings Modal State
+  // Settings Modal States
+  const [settingsTab, setSettingsTab] = useState<'visual' | 'backup'>('visual');
   const [showSettingsModal, setShowSettingsModal] = useState<boolean>(false);
-  const [previewMediaExpanded, setPreviewMediaExpanded] = useState<boolean>(false);
+
+  // Track expanded media per task
+  const [expandedMediaIds, setExpandedMediaIds] = useState<Record<string, boolean>>({});
 
   // Data States
   const [projetos, setProjetos] = useState<Projeto[]>(() => {
-    const saved = localStorage.getItem('app_projetos_backup');
-    if (saved) {
-      try {
-        return JSON.parse(saved);
-      } catch {
-        // fallback
-      }
+    try {
+      const saved = localStorage.getItem('app_projetos_backup');
+      if (saved) return JSON.parse(saved);
+    } catch {
+      // fallback
     }
     return INITIAL_PROJECTS;
   });
 
   const [tarefas, setTarefas] = useState<Tarefa[]>(() => {
-    const saved = localStorage.getItem('app_tarefas_backup');
-    if (saved) {
-      try {
-        return JSON.parse(saved);
-      } catch {
-        // fallback
-      }
+    try {
+      const saved = localStorage.getItem('app_tarefas_backup');
+      if (saved) return JSON.parse(saved);
+    } catch {
+      // fallback
     }
     return INITIAL_TASKS;
   });
@@ -252,9 +251,7 @@ export default function App() {
   // Modals
   const [showNewProjectModal, setShowNewProjectModal] = useState(false);
   const [showEditTaskModal, setShowEditTaskModal] = useState(false);
-  const [showCodeModal, setShowCodeModal] = useState(false);
   const [previewMediaUrl, setPreviewMediaUrl] = useState<string | null>(null);
-  const [copiedCmd, setCopiedCmd] = useState(false);
 
   // Form states (Quick Creation)
   const [newProjectNome, setNewProjectNome] = useState('');
@@ -278,45 +275,50 @@ export default function App() {
   const editFileInputRef = useRef<HTMLInputElement>(null);
   const backupInputRef = useRef<HTMLInputElement>(null);
 
-  // Apply customizations dynamically
+  // Set official application title strictly as "Backlog"
   useEffect(() => {
-    if (theme === 'dark') {
-      document.documentElement.classList.add('dark');
-    } else {
-      document.documentElement.classList.remove('dark');
+    document.title = 'Backlog';
+  }, []);
+
+  // Apply Theme (Dark / Light) to <html> and <body> with .dark, .light and data-theme
+  useEffect(() => {
+    const root = document.documentElement;
+    const body = document.body;
+
+    root.classList.remove('dark', 'light');
+    root.classList.add(theme);
+    root.setAttribute('data-theme', theme);
+    root.style.colorScheme = theme;
+
+    if (body) {
+      body.classList.remove('dark', 'light');
+      body.classList.add(theme);
+      body.setAttribute('data-theme', theme);
     }
-    localStorage.setItem('app_theme', theme);
+
+    try {
+      localStorage.setItem('app_theme', theme);
+    } catch {
+      // ignore
+    }
     document.cookie = `app_theme=${theme};path=/;max-age=31536000;SameSite=Lax`;
   }, [theme]);
 
-  useEffect(() => {
-    localStorage.setItem('app_font_size', fontSize);
-    document.cookie = `app_font_size=${fontSize};path=/;max-age=31536000;SameSite=Lax`;
-  }, [fontSize]);
-
-  useEffect(() => {
-    localStorage.setItem('app_font_family', fontFamily);
-    document.cookie = `app_font_family=${fontFamily};path=/;max-age=31536000;SameSite=Lax`;
-  }, [fontFamily]);
-
-  useEffect(() => {
-    localStorage.setItem('app_view_mode', viewMode);
-    document.cookie = `app_view_mode=${viewMode};path=/;max-age=31536000;SameSite=Lax`;
-  }, [viewMode]);
-
-  // Save local backup cache whenever projects/tasks change
-  useEffect(() => {
-    localStorage.setItem('app_projetos_backup', JSON.stringify(projetos));
-  }, [projetos]);
-
-  useEffect(() => {
-    localStorage.setItem('app_tarefas_backup', JSON.stringify(tarefas));
-  }, [tarefas]);
-
-  // Inject dynamic typography styles
+  // Apply Font Family and Font Size Scale (13px / 15px / 17px) globally and reactively
   useEffect(() => {
     const familyCss = getFontFamilyCss(fontFamily);
     const sizePx = getFontSizePx(fontSize);
+    const root = document.documentElement;
+    const body = document.body;
+
+    root.style.setProperty('--app-font-family', familyCss);
+    root.style.setProperty('--app-font-size', sizePx);
+    root.style.fontSize = sizePx;
+    root.style.fontFamily = familyCss;
+
+    if (body) {
+      body.style.fontFamily = familyCss;
+    }
 
     let styleEl = document.getElementById('app-dynamic-typography');
     if (!styleEl) {
@@ -332,12 +334,48 @@ export default function App() {
       }
       html {
         font-size: ${sizePx} !important;
+        font-family: ${familyCss} !important;
       }
       body, #root, button, input, select, textarea {
         font-family: ${familyCss} !important;
       }
     `;
+
+    try {
+      localStorage.setItem('app_font_size', fontSize);
+      localStorage.setItem('app_font_family', fontFamily);
+    } catch {
+      // ignore
+    }
+    document.cookie = `app_font_size=${encodeURIComponent(fontSize)};path=/;max-age=31536000;SameSite=Lax`;
+    document.cookie = `app_font_family=${encodeURIComponent(fontFamily)};path=/;max-age=31536000;SameSite=Lax`;
   }, [fontFamily, fontSize]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('app_view_mode', viewMode);
+    } catch {
+      // ignore
+    }
+    document.cookie = `app_view_mode=${viewMode};path=/;max-age=31536000;SameSite=Lax`;
+  }, [viewMode]);
+
+  // Save local backup cache whenever projects/tasks change
+  useEffect(() => {
+    try {
+      localStorage.setItem('app_projetos_backup', JSON.stringify(projetos));
+    } catch {
+      // ignore
+    }
+  }, [projetos]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('app_tarefas_backup', JSON.stringify(tarefas));
+    } catch {
+      // ignore
+    }
+  }, [tarefas]);
 
   // Fetch initial state from PHP Backend (api.php)
   const fetchBackendState = useCallback(async () => {
@@ -350,9 +388,6 @@ export default function App() {
       const data = await res.json();
       setBackendConnected(true);
       if (data.csrf_token) setCsrfToken(data.csrf_token);
-      if (typeof data.supabase_configured === 'boolean') setSupabaseConfigured(data.supabase_configured);
-      if (typeof data.require_auth === 'boolean') setRequireAuth(data.require_auth);
-      if (typeof data.is_default_password === 'boolean') setIsDefaultPassword(data.is_default_password);
 
       if (data.authenticated === false) {
         setIsAuthenticated(false);
@@ -362,7 +397,6 @@ export default function App() {
         if (Array.isArray(data.tarefas)) setTarefas(data.tarefas);
       }
     } catch {
-      // Fallback to local mode if PHP server is not running
       setBackendConnected(false);
       const localLocked = sessionStorage.getItem('app_local_locked') === '1';
       setIsAuthenticated(!localLocked);
@@ -375,13 +409,11 @@ export default function App() {
     fetchBackendState();
   }, [fetchBackendState]);
 
-  // Selected project object
   const currentProject = useMemo(() => {
     if (selectedProjectId === 'all') return null;
     return projetos.find(p => p.id === selectedProjectId) || null;
   }, [projetos, selectedProjectId]);
 
-  // Counts & Dashboard Metrics
   const pendingCounts = useMemo(() => countPendingByProject(tarefas), [tarefas]);
 
   const metrics = useMemo(() => {
@@ -409,12 +441,10 @@ export default function App() {
     [tarefas]
   );
 
-  // Filtered tasks
   const filteredTasks = useMemo(() => {
     return filterTasks(tarefas, selectedProjectId, statusFilter, searchQuery);
   }, [tarefas, selectedProjectId, statusFilter, searchQuery]);
 
-  // Toggle media visibility for a specific task
   const toggleMediaExpand = (taskId: string) => {
     setExpandedMediaIds(prev => ({
       ...prev,
@@ -441,12 +471,10 @@ export default function App() {
         });
         const data = await res.json();
         if (!res.ok || !data.ok) {
-          setLoginError(data.error || 'Acesso negado: E-mail ou senha inválidos.');
+          setLoginError(data.error || 'E-mail ou senha inválidos.');
           return;
         }
         if (data.csrf_token) setCsrfToken(data.csrf_token);
-        if (typeof data.supabase_configured === 'boolean') setSupabaseConfigured(data.supabase_configured);
-        if (typeof data.is_default_password === 'boolean') setIsDefaultPassword(data.is_default_password);
         if (Array.isArray(data.projetos)) setProjetos(data.projetos);
         if (Array.isArray(data.tarefas)) setTarefas(data.tarefas);
         setIsAuthenticated(true);
@@ -465,45 +493,8 @@ export default function App() {
         setIsAuthenticated(true);
         setLoginInput('');
       } else {
-        setLoginError('Acesso negado: E-mail ou senha inválidos.');
+        setLoginError('E-mail ou senha inválidos.');
       }
-    }
-  };
-
-  const handleSyncSupabase = async () => {
-    setSyncingSupabase(true);
-    setSecFeedback(null);
-    try {
-      const res = await fetch('./api.php?action=sync_supabase', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-CSRF-Token': csrfToken
-        },
-        credentials: 'same-origin',
-        body: JSON.stringify({ csrf_token: csrfToken })
-      });
-      const data = await res.json();
-      if (!res.ok || !data.ok) {
-        setSecFeedback({
-          type: 'err',
-          text: data.error || 'Não foi possível sincronizar com o Supabase.'
-        });
-      } else {
-        if (Array.isArray(data.projetos)) setProjetos(data.projetos);
-        if (Array.isArray(data.tarefas)) setTarefas(data.tarefas);
-        setSecFeedback({
-          type: 'ok',
-          text: data.message || 'Dados sincronizados com sucesso no Supabase!'
-        });
-      }
-    } catch {
-      setSecFeedback({
-        type: 'err',
-        text: 'Erro de conexão ao tentar sincronizar com o Supabase.'
-      });
-    } finally {
-      setSyncingSupabase(false);
     }
   };
 
@@ -524,57 +515,6 @@ export default function App() {
     }
     setIsAuthenticated(false);
     setLoginInput('');
-  };
-
-  const handleUpdateSecurity = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setSecFeedback(null);
-
-    if (backendConnected) {
-      try {
-        const res = await fetch('./api.php?action=update_security', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'X-CSRF-Token': csrfToken
-          },
-          credentials: 'same-origin',
-          body: JSON.stringify({
-            current_password: secCurrentPass,
-            new_password: secNewPass,
-            new_pin: secNewPin,
-            require_auth: requireAuth,
-            csrf_token: csrfToken
-          })
-        });
-        const data = await res.json();
-        if (!res.ok || !data.ok) {
-          setSecFeedback({ type: 'err', text: data.error || 'Falha ao atualizar segurança.' });
-          return;
-        }
-        setIsDefaultPassword(Boolean(data.is_default_password));
-        setSecCurrentPass('');
-        setSecNewPass('');
-        setSecNewPin('');
-        setSecFeedback({ type: 'ok', text: data.message || 'Segurança atualizada com sucesso!' });
-      } catch {
-        setSecFeedback({ type: 'err', text: 'Erro de comunicação com o servidor.' });
-      }
-    } else {
-      const savedPass = localStorage.getItem('app_local_pass') || 'admin123';
-      const savedPin = localStorage.getItem('app_local_pin') || '1234';
-      if (secCurrentPass !== savedPass && secCurrentPass !== savedPin) {
-        setSecFeedback({ type: 'err', text: 'Senha ou PIN atual incorreto.' });
-        return;
-      }
-      if (secNewPass.trim()) localStorage.setItem('app_local_pass', secNewPass.trim());
-      if (secNewPin.trim()) localStorage.setItem('app_local_pin', secNewPin.trim());
-      setIsDefaultPassword(false);
-      setSecCurrentPass('');
-      setSecNewPass('');
-      setSecNewPin('');
-      setSecFeedback({ type: 'ok', text: 'Credenciais salvas localmente com sucesso!' });
-    }
   };
 
   // Project Handlers
@@ -604,7 +544,7 @@ export default function App() {
           if (data.project?.id) setSelectedProjectId(data.project.id);
         }
       } catch {
-        // fallback below
+        // fallback
       }
     } else {
       const newId = `proj_${Date.now()}`;
@@ -730,7 +670,6 @@ export default function App() {
   };
 
   const handleUpdateTaskStatus = async (taskId: string, newStatus: TaskStatus) => {
-    // Optimistic UI update
     setTarefas(prev =>
       prev.map(t => (t.id === taskId ? { ...t, status: newStatus } : t))
     );
@@ -755,13 +694,13 @@ export default function App() {
           setTarefas(data.tarefas);
         }
       } catch {
-        // already updated optimistically
+        // optimistic update kept
       }
     }
   };
 
   const handleDeleteTask = async (taskId: string) => {
-    if (!window.confirm('Excluir esta ideia de backlog permanentemente?')) return;
+    if (!window.confirm('Excluir esta ideia permanentemente?')) return;
 
     setTarefas(prev => prev.filter(t => t.id !== taskId));
 
@@ -872,12 +811,12 @@ export default function App() {
         if (data.ok) {
           setProjetos(data.projetos);
           setTarefas(data.tarefas);
-          alert('Backup restaurado com sucesso no servidor!');
+          alert('Backup restaurado com sucesso!');
         }
       } else {
         setProjetos(parsed.projetos);
         setTarefas(parsed.tarefas);
-        alert('Backup restaurado localmente com sucesso!');
+        alert('Backup restaurado com sucesso!');
       }
     } catch {
       alert('Não foi possível ler o arquivo JSON.');
@@ -886,16 +825,10 @@ export default function App() {
     }
   };
 
-  const handleCopyCmd = () => {
-    navigator.clipboard.writeText('php -S localhost:8080 index.php');
-    setCopiedCmd(true);
-    setTimeout(() => setCopiedCmd(false), 2000);
-  };
-
   const activeFontFamilyCss = getFontFamilyCss(fontFamily);
 
-  // Render Task Card (Used in both Kanban and List Views)
-  const renderTaskCard = (task: Tarefa, isCompactKanban = false) => {
+  // Render Task Card
+  const renderTaskCard = (task: Tarefa) => {
     const isDone = task.status === 'concluido';
     const isInProgress = task.status === 'em_andamento';
     const due = calculateDueStatus(task.data_limite, task.status);
@@ -984,7 +917,7 @@ export default function App() {
             <div className="flex-1 min-w-0">
               <div className="flex flex-wrap items-center gap-1.5">
                 <span
-                  className={`font-semibold tracking-tight leading-snug ${
+                  className={`text-sm font-semibold tracking-tight leading-snug ${
                     isDone
                       ? theme === 'dark'
                         ? 'line-through text-zinc-500'
@@ -1001,14 +934,14 @@ export default function App() {
               {/* Badges Row */}
               <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
                 <span
-                  className={`text-[10px] px-1.5 py-0.5 rounded border uppercase tracking-wider font-mono ${prioClass}`}
+                  className={`text-[0.7rem] px-1.5 py-0.5 rounded border uppercase tracking-wider font-mono ${prioClass}`}
                 >
                   {task.prioridade}
                 </span>
 
                 {task.data_limite && (
                   <span
-                    className={`text-[10px] px-1.5 py-0.5 rounded border font-mono flex items-center gap-1 ${dueBadgeClass}`}
+                    className={`text-[0.7rem] px-1.5 py-0.5 rounded border font-mono flex items-center gap-1 ${dueBadgeClass}`}
                   >
                     <Calendar className="w-2.5 h-2.5 opacity-75" />
                     <span>{due.label}</span>
@@ -1017,12 +950,12 @@ export default function App() {
 
                 {selectedProjectId === 'all' && proj && (
                   <span
-                    className={`text-[10px] px-1.5 py-0.5 rounded border flex items-center gap-1.5 ${
+                    className={`text-[0.7rem] px-1.5 py-0.5 rounded border flex items-center gap-1.5 ${
                       theme === 'dark' ? projColor.badgeDark : projColor.badgeLight
                     }`}
                   >
                     <span className={`w-1.5 h-1.5 rounded-full ${projColor.dot}`} />
-                    <span className="truncate max-w-[120px]">{proj.nome}</span>
+                    <span className="truncate max-w-[8rem]">{proj.nome}</span>
                   </span>
                 )}
               </div>
@@ -1067,13 +1000,13 @@ export default function App() {
                           <span>Anexo</span>
                         </>
                       )}
-                      <span className="text-[10px] opacity-75 font-mono truncate max-w-[120px]">
+                      <span className="text-[0.7rem] opacity-75 font-mono truncate max-w-[8rem]">
                         ({task.anexo.nome_original})
                       </span>
                     </button>
 
                     {task.anexo.tamanho_formatado && (
-                      <span className="text-[10px] text-zinc-500 font-mono">
+                      <span className="text-[0.7rem] text-zinc-500 font-mono">
                         {task.anexo.tamanho_formatado}
                       </span>
                     )}
@@ -1102,7 +1035,7 @@ export default function App() {
                               className="absolute bottom-2 right-2 p-1.5 rounded-md bg-black/75 hover:bg-black text-white text-xs flex items-center gap-1 cursor-pointer"
                             >
                               <ZoomIn className="w-3 h-3" />
-                              <span className="text-[10px]">Ampliar</span>
+                              <span className="text-[0.7rem]">Ampliar</span>
                             </button>
                           </div>
                         </div>
@@ -1125,7 +1058,7 @@ export default function App() {
 
               {/* Rodapé do Card: Controles Rápidos de Status + Data */}
               <div className="flex flex-wrap items-center justify-between gap-2 mt-2.5 pt-2 border-t border-zinc-200/40 dark:border-zinc-800/50">
-                <span className="text-[10px] text-zinc-400 dark:text-zinc-500 font-mono">
+                <span className="text-[0.7rem] text-zinc-400 dark:text-zinc-500 font-mono">
                   {formatDateTime(task.criado_em)}
                 </span>
 
@@ -1134,7 +1067,7 @@ export default function App() {
                     <button
                       type="button"
                       onClick={() => handleUpdateTaskStatus(task.id, 'em_andamento')}
-                      className={`text-[10px] px-2 py-0.5 rounded-md border flex items-center gap-1 transition-colors cursor-pointer ${
+                      className={`text-[0.7rem] px-2 py-0.5 rounded-md border flex items-center gap-1 transition-colors cursor-pointer ${
                         theme === 'dark'
                           ? 'bg-amber-950/30 hover:bg-amber-900/50 text-amber-300 border-amber-800/50'
                           : 'bg-amber-50 hover:bg-amber-100 text-amber-800 border-amber-200'
@@ -1151,7 +1084,7 @@ export default function App() {
                       <button
                         type="button"
                         onClick={() => handleUpdateTaskStatus(task.id, 'pendente')}
-                        className={`text-[10px] px-1.5 py-0.5 rounded-md border flex items-center gap-1 transition-colors cursor-pointer ${
+                        className={`text-[0.7rem] px-1.5 py-0.5 rounded-md border flex items-center gap-1 transition-colors cursor-pointer ${
                           theme === 'dark'
                             ? 'bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border-zinc-700'
                             : 'bg-slate-100 hover:bg-slate-200 text-slate-600 border-slate-200'
@@ -1163,7 +1096,7 @@ export default function App() {
                       <button
                         type="button"
                         onClick={() => handleUpdateTaskStatus(task.id, 'concluido')}
-                        className={`text-[10px] px-2 py-0.5 rounded-md border flex items-center gap-1 transition-colors cursor-pointer ${
+                        className={`text-[0.7rem] px-2 py-0.5 rounded-md border flex items-center gap-1 transition-colors cursor-pointer ${
                           theme === 'dark'
                             ? 'bg-emerald-950/40 hover:bg-emerald-900/60 text-emerald-300 border-emerald-800/50'
                             : 'bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border-emerald-200'
@@ -1180,7 +1113,7 @@ export default function App() {
                     <button
                       type="button"
                       onClick={() => handleUpdateTaskStatus(task.id, 'pendente')}
-                      className={`text-[10px] px-2 py-0.5 rounded-md border flex items-center gap-1 transition-colors cursor-pointer ${
+                      className={`text-[0.7rem] px-2 py-0.5 rounded-md border flex items-center gap-1 transition-colors cursor-pointer ${
                         theme === 'dark'
                           ? 'bg-zinc-800 hover:bg-zinc-700 text-zinc-400 border-zinc-700'
                           : 'bg-slate-100 hover:bg-slate-200 text-slate-600 border-slate-200'
@@ -1229,17 +1162,30 @@ export default function App() {
     );
   };
 
-  // TELA DE BLOQUEIO / LOGIN DE SEGURANÇA
+  // TELA DE AUTENTICAÇÃO LIMPA E MINIMALISTA
   if (!isLoadingAuth && !isAuthenticated) {
     return (
       <div
         style={{ fontFamily: activeFontFamilyCss }}
-        className={`min-h-screen flex items-center justify-center p-4 transition-colors ${
+        className={`min-h-screen flex items-center justify-center p-4 transition-colors relative ${
           theme === 'dark' ? 'bg-[#09090b] text-zinc-100' : 'bg-[#eaedf1] text-slate-900'
         }`}
       >
+        <button
+          type="button"
+          onClick={() => setTheme(prev => (prev === 'dark' ? 'light' : 'dark'))}
+          className={`absolute top-4 right-4 p-2.5 rounded-xl border transition-colors cursor-pointer ${
+            theme === 'dark'
+              ? 'bg-[#121215] border-zinc-800 text-zinc-300 hover:bg-zinc-800'
+              : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100 shadow-2xs'
+          }`}
+          title={theme === 'dark' ? 'Alternar para modo claro' : 'Alternar para modo escuro'}
+        >
+          {theme === 'dark' ? <Sun className="w-4 h-4 text-amber-400" /> : <Moon className="w-4 h-4 text-slate-700" />}
+        </button>
+
         <div
-          className={`w-full max-w-md rounded-2xl border p-6 sm:p-8 shadow-2xl ${
+          className={`w-full max-w-sm rounded-2xl border p-6 sm:p-8 shadow-2xl ${
             theme === 'dark'
               ? 'bg-[#121215] border-zinc-800'
               : 'bg-white border-slate-300'
@@ -1249,18 +1195,15 @@ export default function App() {
             <div className="w-12 h-12 rounded-2xl bg-blue-600/15 border border-blue-500/30 flex items-center justify-center text-blue-500 mb-3 shadow-inner">
               <Lock className="w-6 h-6" />
             </div>
-            <h1 className="text-base sm:text-lg font-bold tracking-tight">
-              Acesso Restrito — Backlog & Ideias
+            <h1 className="text-lg font-bold tracking-tight">
+              Acesso Restrito
             </h1>
-            <p className="text-xs text-zinc-500 mt-1">
-              Acesso exclusivo via E-mail e Senha configurados no seu arquivo seguro <code className="font-mono">.env</code>.
-            </p>
           </div>
 
           <form onSubmit={handleLogin} className="space-y-4">
             <div>
-              <label className="block text-[11px] font-semibold uppercase tracking-wider text-zinc-500 mb-1.5">
-                E-mail Autorizado
+              <label className="block text-[0.75rem] font-semibold uppercase tracking-wider text-zinc-500 mb-1.5">
+                E-mail
               </label>
               <input
                 type="email"
@@ -1268,7 +1211,7 @@ export default function App() {
                 required
                 value={loginEmail}
                 onChange={e => setLoginEmail(e.target.value)}
-                placeholder="seu_email@dominio.com"
+                placeholder="seu@email.com"
                 className={`w-full text-sm px-4 py-2.5 rounded-xl border focus:outline-none focus:border-blue-500 transition-colors ${
                   theme === 'dark'
                     ? 'bg-[#18181c] border-zinc-800 text-zinc-100 placeholder-zinc-600'
@@ -1278,8 +1221,8 @@ export default function App() {
             </div>
 
             <div>
-              <label className="block text-[11px] font-semibold uppercase tracking-wider text-zinc-500 mb-1.5">
-                Senha de Acesso
+              <label className="block text-[0.75rem] font-semibold uppercase tracking-wider text-zinc-500 mb-1.5">
+                Senha
               </label>
               <div className="relative">
                 <KeyRound className="w-4 h-4 text-zinc-500 absolute left-3.5 top-3" />
@@ -1288,7 +1231,7 @@ export default function App() {
                   required
                   value={loginInput}
                   onChange={e => setLoginInput(e.target.value)}
-                  placeholder="Digite sua senha..."
+                  placeholder="••••••••"
                   className={`w-full text-sm pl-10 pr-4 py-2.5 rounded-xl border focus:outline-none focus:border-blue-500 transition-colors ${
                     theme === 'dark'
                       ? 'bg-[#18181c] border-zinc-800 text-zinc-100 placeholder-zinc-600'
@@ -1310,24 +1253,8 @@ export default function App() {
               className="w-full py-2.5 px-4 bg-blue-600 hover:bg-blue-500 text-white font-semibold text-xs rounded-xl shadow-md transition-colors flex items-center justify-center gap-2 cursor-pointer"
             >
               <Unlock className="w-4 h-4" />
-              <span>Entrar na Plataforma</span>
+              <span>Entrar</span>
             </button>
-
-            <div
-              className={`p-3 rounded-xl border text-[11px] leading-relaxed ${
-                theme === 'dark'
-                  ? 'bg-zinc-900/80 border-zinc-800 text-zinc-400'
-                  : 'bg-slate-100 border-slate-200 text-slate-600'
-              }`}
-            >
-              <span className="font-semibold text-blue-500 block mb-0.5">
-                Segurança de Credenciais (.env + .gitignore):
-              </span>
-              Suas credenciais (<code className="font-mono">ADMIN_EMAIL</code> e{' '}
-              <code className="font-mono">ADMIN_PASSWORD</code>) e chaves do Supabase ficam
-              isoladas exclusivamente no arquivo local <code className="font-mono">.env</code>,
-              bloqueado contra acesso externo e ignorado pelo Git.
-            </div>
           </form>
         </div>
       </div>
@@ -1374,33 +1301,13 @@ export default function App() {
             >
               <CheckSquare className="w-4 h-4" />
             </div>
-            <div>
-              <h1
-                className={`font-bold text-xs sm:text-sm tracking-tight leading-none ${
-                  theme === 'dark' ? 'text-zinc-100' : 'text-slate-900'
-                }`}
-              >
-                Backlog & Ideias
-              </h1>
-              <div className="flex items-center gap-1.5 mt-0.5">
-                <span
-                  className={`w-1.5 h-1.5 rounded-full ${
-                    supabaseConfigured
-                      ? 'bg-emerald-500'
-                      : backendConnected
-                        ? 'bg-blue-500'
-                        : 'bg-amber-500'
-                  }`}
-                />
-                <span className="text-[10px] text-zinc-500 font-mono hidden xs:inline">
-                  {supabaseConfigured
-                    ? 'Supabase Cloud Ativo'
-                    : backendConnected
-                      ? 'Backend WAMP Ativo (.env)'
-                      : 'Modo Local Seguro'}
-                </span>
-              </div>
-            </div>
+            <h1
+              className={`font-bold text-sm sm:text-base tracking-tight leading-none ${
+                theme === 'dark' ? 'text-zinc-100' : 'text-slate-900'
+              }`}
+            >
+              Backlog
+            </h1>
           </div>
 
           {/* Seletor Rápido de Visualização no Header: Kanban vs Lista */}
@@ -1442,8 +1349,26 @@ export default function App() {
           </div>
         </div>
 
-        {/* Direita: Bloquear Tela, Backup Rápido e Engrenagem */}
+        {/* Direita: Alternar Tema, Backup, Trancar e Configurações */}
         <div className="flex items-center gap-2 ml-auto">
+          <button
+            type="button"
+            onClick={() => setTheme(prev => (prev === 'dark' ? 'light' : 'dark'))}
+            className={`p-2 rounded-lg border transition-colors cursor-pointer ${
+              theme === 'dark'
+                ? 'bg-zinc-900 hover:bg-zinc-800 text-zinc-300 border-zinc-800'
+                : 'bg-white hover:bg-slate-100 text-slate-700 border-slate-300 shadow-2xs'
+            }`}
+            title={theme === 'dark' ? 'Mudar para Tema White' : 'Mudar para Tema Black'}
+            aria-label="Alternar tema"
+          >
+            {theme === 'dark' ? (
+              <Sun className="w-4 h-4 text-amber-400" />
+            ) : (
+              <Moon className="w-4 h-4 text-slate-700" />
+            )}
+          </button>
+
           <button
             type="button"
             onClick={handleExportBackup}
@@ -1466,7 +1391,7 @@ export default function App() {
                 ? 'bg-zinc-900 hover:bg-rose-950/40 text-zinc-300 hover:text-rose-300 border-zinc-800 hover:border-rose-900/50'
                 : 'bg-white hover:bg-rose-50 text-slate-700 hover:text-rose-700 border-slate-300'
             }`}
-            title="Trancar tela imediatamente (exigir senha/PIN)"
+            title="Trancar sessão"
           >
             <Lock className="w-3.5 h-3.5 text-amber-500" />
             <span className="hidden sm:inline">Trancar</span>
@@ -1483,8 +1408,8 @@ export default function App() {
                 ? 'bg-zinc-900 hover:bg-zinc-800 text-zinc-300 hover:text-white border-zinc-800 hover:border-zinc-700'
                 : 'bg-white hover:bg-slate-100 text-slate-700 hover:text-slate-900 border-slate-300 shadow-2xs'
             }`}
-            aria-label="Abrir Configurações e Segurança"
-            title="Configurações Visuais, Senha/PIN e Backups"
+            aria-label="Abrir Configurações"
+            title="Configurações Visuais e Backup"
           >
             <Settings className="w-4 h-4 text-zinc-400 group-hover:text-blue-500 transition-colors" />
           </button>
@@ -1552,7 +1477,7 @@ export default function App() {
               </div>
               {totalActiveGlobal > 0 && (
                 <span
-                  className={`text-[11px] px-1.5 py-0.5 rounded-full font-mono border ${
+                  className={`text-[0.75rem] px-1.5 py-0.5 rounded-full font-mono border ${
                     theme === 'dark'
                       ? 'bg-zinc-900 border-zinc-700 text-zinc-300'
                       : 'bg-white border-slate-300 text-slate-700'
@@ -1563,7 +1488,7 @@ export default function App() {
               )}
             </button>
 
-            <div className="pt-3 pb-1 px-3 text-[10px] font-semibold uppercase tracking-wider text-zinc-400 dark:text-zinc-500">
+            <div className="pt-3 pb-1 px-3 text-[0.7rem] font-semibold uppercase tracking-wider text-zinc-400 dark:text-zinc-500">
               Suas Pastas ({projetos.length})
             </div>
 
@@ -1595,7 +1520,7 @@ export default function App() {
                   </div>
                   {activeCount > 0 && (
                     <span
-                      className={`text-[11px] px-1.5 py-0.5 rounded-full font-mono border shrink-0 ${
+                      className={`text-[0.75rem] px-1.5 py-0.5 rounded-full font-mono border shrink-0 ${
                         theme === 'dark'
                           ? 'bg-zinc-900 border-zinc-800 text-zinc-400'
                           : 'bg-white border-slate-300 text-slate-600'
@@ -1617,7 +1542,7 @@ export default function App() {
                 : 'bg-[#f4f6f8] border-slate-200'
             }`}
           >
-            <div className="flex items-center justify-between text-[11px]">
+            <div className="flex items-center justify-between text-[0.75rem]">
               <span className="text-zinc-500 font-medium">Progresso Concluído</span>
               <span className="font-mono font-semibold text-emerald-500">
                 {metrics.progressPct}%
@@ -1629,18 +1554,18 @@ export default function App() {
                 style={{ width: `${metrics.progressPct}%` }}
               />
             </div>
-            <div className="flex items-center justify-between text-[10px] text-zinc-500 pt-1">
-              <span>Total: {tarefas.length} ideias</span>
+            <div className="flex items-center justify-between text-[0.7rem] text-zinc-500 pt-1">
+              <span>Total: {tarefas.length} itens</span>
               <button
                 type="button"
                 onClick={() => {
-                  setSettingsTab('security');
+                  setSettingsTab('visual');
                   setShowSettingsModal(true);
                 }}
                 className="text-blue-500 hover:underline flex items-center gap-1 cursor-pointer"
               >
-                <ShieldCheck className="w-3 h-3" />
-                <span>Segurança</span>
+                <Settings className="w-3 h-3" />
+                <span>Preferências</span>
               </button>
             </div>
           </div>
@@ -1673,7 +1598,7 @@ export default function App() {
                       theme === 'dark' ? 'text-zinc-100' : 'text-slate-900'
                     }`}
                   >
-                    {currentProject ? currentProject.nome : 'Todas as Ideias & Backlog'}
+                    {currentProject ? currentProject.nome : 'Backlog'}
                   </h2>
                 </div>
                 <p
@@ -1683,7 +1608,7 @@ export default function App() {
                 >
                   {currentProject
                     ? currentProject.descricao || 'Pasta de ideias e tarefas do projeto.'
-                    : 'Visualização consolidada com Quadro Kanban e Lista.'}
+                    : 'Visualização consolidada em Quadro Kanban e Lista.'}
                 </p>
               </div>
 
@@ -1715,7 +1640,7 @@ export default function App() {
                 }`}
               >
                 <div>
-                  <span className="text-[10px] uppercase font-mono text-zinc-500 block">
+                  <span className="text-[0.7rem] uppercase font-mono text-zinc-500 block">
                     Pendentes
                   </span>
                   <span className="text-lg font-bold text-blue-500 font-mono">
@@ -1735,7 +1660,7 @@ export default function App() {
                 }`}
               >
                 <div>
-                  <span className="text-[10px] uppercase font-mono text-zinc-500 block">
+                  <span className="text-[0.7rem] uppercase font-mono text-zinc-500 block">
                     Em Andamento
                   </span>
                   <span className="text-lg font-bold text-amber-500 font-mono">
@@ -1755,7 +1680,7 @@ export default function App() {
                 }`}
               >
                 <div>
-                  <span className="text-[10px] uppercase font-mono text-zinc-500 block">
+                  <span className="text-[0.7rem] uppercase font-mono text-zinc-500 block">
                     Concluídas
                   </span>
                   <span className="text-lg font-bold text-emerald-500 font-mono">
@@ -1775,7 +1700,7 @@ export default function App() {
                 }`}
               >
                 <div>
-                  <span className="text-[10px] uppercase font-mono text-zinc-500 block">
+                  <span className="text-[0.7rem] uppercase font-mono text-zinc-500 block">
                     Urgentes / Hoje
                   </span>
                   <span
@@ -1798,7 +1723,7 @@ export default function App() {
               </div>
             </div>
 
-            {/* Formulário Rápido de Adição de Ideia */}
+            {/* Formulário Rápido de Adição */}
             <div
               className={`p-3.5 sm:p-4 rounded-xl border ${
                 theme === 'dark'
@@ -1814,7 +1739,7 @@ export default function App() {
                     value={newTaskTitulo}
                     onChange={e => setNewTaskTitulo(e.target.value)}
                     onFocus={() => setShowQuickFormDetails(true)}
-                    placeholder="Adicionar nova ideia, tarefa ou funcionalidade..."
+                    placeholder="Adicionar novo item ao backlog..."
                     className={`flex-1 text-xs px-3.5 py-2.5 border rounded-xl focus:outline-none focus:border-blue-500 transition-colors ${
                       theme === 'dark'
                         ? 'bg-[#101013] border-zinc-800 text-zinc-100 placeholder-zinc-500'
@@ -1847,7 +1772,7 @@ export default function App() {
                   <div className="space-y-3 pt-2 border-t border-zinc-200/60 dark:border-zinc-800/80 animate-in fade-in duration-150">
                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5">
                       <div>
-                        <label className="block text-[10px] uppercase font-mono text-zinc-500 mb-1">
+                        <label className="block text-[0.7rem] uppercase font-mono text-zinc-500 mb-1">
                           Pasta Destino
                         </label>
                         <select
@@ -1871,7 +1796,7 @@ export default function App() {
                       </div>
 
                       <div>
-                        <label className="block text-[10px] uppercase font-mono text-zinc-500 mb-1">
+                        <label className="block text-[0.7rem] uppercase font-mono text-zinc-500 mb-1">
                           Prioridade
                         </label>
                         <select
@@ -1890,7 +1815,7 @@ export default function App() {
                       </div>
 
                       <div>
-                        <label className="block text-[10px] uppercase font-mono text-zinc-500 mb-1">
+                        <label className="block text-[0.7rem] uppercase font-mono text-zinc-500 mb-1">
                           Coluna Inicial
                         </label>
                         <select
@@ -1909,7 +1834,7 @@ export default function App() {
                       </div>
 
                       <div>
-                        <label className="block text-[10px] uppercase font-mono text-zinc-500 mb-1">
+                        <label className="block text-[0.7rem] uppercase font-mono text-zinc-500 mb-1">
                           Prazo / Lembrete
                         </label>
                         <input
@@ -1929,7 +1854,7 @@ export default function App() {
                       rows={2}
                       value={newTaskDesc}
                       onChange={e => setNewTaskDesc(e.target.value)}
-                      placeholder="Descrição detalhada, checklist ou anotações técnicas (opcional)..."
+                      placeholder="Descrição detalhada, checklist ou anotações (opcional)..."
                       className={`w-full text-xs px-3 py-2 border rounded-lg focus:outline-none focus:border-blue-500 transition-colors ${
                         theme === 'dark'
                           ? 'bg-[#101013] border-zinc-800 text-zinc-200 placeholder-zinc-500'
@@ -1986,7 +1911,7 @@ export default function App() {
             </div>
           </div>
 
-          {/* Barra de Filtro, Alternador Mobile Kanban/Lista e Busca */}
+          {/* Barra de Filtro e Busca */}
           <div
             className={`p-3 sm:p-4 border-b flex flex-col sm:flex-row items-center justify-between gap-3 ${
               theme === 'dark'
@@ -2014,7 +1939,7 @@ export default function App() {
                   }`}
                 >
                   {tab.label}{' '}
-                  <span className="ml-1 text-[11px] opacity-70 font-mono">
+                  <span className="ml-1 text-[0.75rem] opacity-70 font-mono">
                     ({tab.count})
                   </span>
                 </button>
@@ -2062,7 +1987,7 @@ export default function App() {
                   type="text"
                   value={searchQuery}
                   onChange={e => setSearchQuery(e.target.value)}
-                  placeholder="Buscar ideia ou palavra-chave..."
+                  placeholder="Buscar no backlog..."
                   className={`w-full text-xs pl-8 pr-7 py-1.5 border rounded-lg focus:outline-none focus:border-blue-500 ${
                     theme === 'dark'
                       ? 'bg-[#151518] border-zinc-800 text-zinc-200 placeholder-zinc-500'
@@ -2091,23 +2016,20 @@ export default function App() {
                     {
                       status: 'pendente' as TaskStatus,
                       title: 'Pendente',
-                      subtitle: 'Ideias e backlog para iniciar',
-                      dotColor: 'bg-blue-500',
-                      headerBorder: 'border-blue-500/30'
+                      subtitle: 'Para iniciar',
+                      dotColor: 'bg-blue-500'
                     },
                     {
                       status: 'em_andamento' as TaskStatus,
                       title: 'Em Andamento',
-                      subtitle: 'Sendo executado agora',
-                      dotColor: 'bg-amber-500',
-                      headerBorder: 'border-amber-500/30'
+                      subtitle: 'Em execução',
+                      dotColor: 'bg-amber-500'
                     },
                     {
                       status: 'concluido' as TaskStatus,
                       title: 'Concluído',
-                      subtitle: 'Finalizado e validado',
-                      dotColor: 'bg-emerald-500',
-                      headerBorder: 'border-emerald-500/30'
+                      subtitle: 'Finalizado',
+                      dotColor: 'bg-emerald-500'
                     }
                   ] as const
                 ).map(col => {
@@ -2155,7 +2077,7 @@ export default function App() {
                             >
                               {col.title}
                             </h3>
-                            <p className="text-[10px] text-zinc-500">{col.subtitle}</p>
+                            <p className="text-[0.7rem] text-zinc-500">{col.subtitle}</p>
                           </div>
                         </div>
                         <span
@@ -2179,12 +2101,9 @@ export default function App() {
                             }`}
                           >
                             <span className="text-xs">Arraste um card para cá</span>
-                            <span className="text-[10px] opacity-75 mt-0.5">
-                              ou crie uma ideia nesta etapa
-                            </span>
                           </div>
                         ) : (
-                          colTasks.map(task => renderTaskCard(task, true))
+                          colTasks.map(task => renderTaskCard(task))
                         )}
                       </div>
                     </div>
@@ -2205,24 +2124,24 @@ export default function App() {
                     theme === 'dark' ? 'text-zinc-400' : 'text-slate-600'
                   }`}
                 >
-                  Nenhuma ideia encontrada
+                  Nenhum item encontrado
                 </h3>
                 <p className="text-xs text-zinc-400 dark:text-zinc-600 mt-1">
                   {searchQuery
                     ? `Nenhum resultado para "${searchQuery}".`
-                    : 'Adicione uma ideia pelo formulário acima.'}
+                    : 'Adicione um item pelo formulário acima.'}
                 </p>
               </div>
             ) : (
               <div className="space-y-2.5">
-                {filteredTasks.map(task => renderTaskCard(task, false))}
+                {filteredTasks.map(task => renderTaskCard(task))}
               </div>
             )}
           </div>
         </main>
       </div>
 
-      {/* MODAL DE CONFIGURAÇÕES & SEGURANÇA (ENGRENAGEM) */}
+      {/* MODAL DE CONFIGURAÇÕES VISUAIS & BACKUP */}
       {showSettingsModal && (
         <div className="fixed inset-0 bg-black/70 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 z-50 animate-in fade-in duration-150">
           <div
@@ -2242,7 +2161,7 @@ export default function App() {
             >
               <div className="flex items-center gap-2">
                 <Settings className="w-4 h-4 text-blue-500" />
-                <h3 className="font-semibold text-sm">Configurações da Plataforma</h3>
+                <h3 className="font-semibold text-sm">Configurações</h3>
               </div>
 
               <div className="flex items-center gap-1">
@@ -2259,15 +2178,15 @@ export default function App() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => setSettingsTab('security')}
+                  onClick={() => setSettingsTab('backup')}
                   className={`text-xs px-3 py-1.5 rounded-lg font-medium flex items-center gap-1 transition-colors cursor-pointer ${
-                    settingsTab === 'security'
+                    settingsTab === 'backup'
                       ? 'bg-blue-600 text-white'
                       : 'text-zinc-400 hover:text-zinc-200'
                   }`}
                 >
-                  <ShieldCheck className="w-3.5 h-3.5" />
-                  <span>Segurança & Backup</span>
+                  <Download className="w-3.5 h-3.5" />
+                  <span>Backup</span>
                 </button>
                 <button
                   type="button"
@@ -2281,9 +2200,9 @@ export default function App() {
 
             {settingsTab === 'visual' ? (
               <div className="p-4 sm:p-6 overflow-y-auto space-y-6 text-xs">
-                {/* 1. Tema Black / White Suave */}
+                {/* 1. Tema Black / White */}
                 <div>
-                  <label className="font-semibold uppercase tracking-wider text-zinc-500 text-[11px] block mb-2">
+                  <label className="font-semibold uppercase tracking-wider text-zinc-500 text-[0.75rem] block mb-2">
                     Tema da Interface
                   </label>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
@@ -2300,9 +2219,9 @@ export default function App() {
                         <Moon className="w-4 h-4 text-blue-400" />
                       </div>
                       <div>
-                        <div className="font-medium text-xs">Tema Black</div>
-                        <div className="text-[10px] text-zinc-500 mt-0.5">
-                          Noturno chumbo sóbrio e profissional
+                        <div className="font-medium text-xs">Modo Black</div>
+                        <div className="text-[0.7rem] text-zinc-500 mt-0.5">
+                          Noturno chumbo sóbrio
                         </div>
                       </div>
                     </button>
@@ -2320,9 +2239,9 @@ export default function App() {
                         <Sun className="w-4 h-4 text-amber-500" />
                       </div>
                       <div>
-                        <div className="font-medium text-xs">Tema White Suave</div>
-                        <div className="text-[10px] text-slate-500 mt-0.5">
-                          Fosco e relaxante aos olhos
+                        <div className="font-medium text-xs">Modo White</div>
+                        <div className="text-[0.7rem] text-slate-500 mt-0.5">
+                          Fosco e confortável aos olhos
                         </div>
                       </div>
                     </button>
@@ -2331,30 +2250,30 @@ export default function App() {
 
                 {/* 2. Estilo de Fonte */}
                 <div>
-                  <label className="font-semibold uppercase tracking-wider text-zinc-500 text-[11px] block mb-2">
-                    Estilo de Fonte
+                  <label className="font-semibold uppercase tracking-wider text-zinc-500 text-[0.75rem] block mb-2">
+                    Família Tipográfica
                   </label>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                     {[
                       {
                         id: 'Helvetica / Arial',
                         name: 'Helvetica / Arial',
-                        desc: 'Clássica, limpa e neutra de sistema'
+                        desc: 'Clássica e neutra de sistema'
                       },
                       {
                         id: 'Montserrat',
                         name: 'Montserrat',
-                        desc: 'Moderna, geométrica e profissional'
+                        desc: 'Moderna e geométrica'
                       },
                       {
                         id: 'Roboto',
                         name: 'Roboto',
-                        desc: 'Padrão Google, equilibrada e legível'
+                        desc: 'Equilibrada e legível'
                       },
                       {
                         id: 'Open Sans / Lato',
                         name: 'Open Sans / Lato',
-                        desc: 'Humanista suave e de fácil leitura'
+                        desc: 'Humanista suave'
                       }
                     ].map(f => {
                       const isSelected = fontFamily === f.id;
@@ -2376,22 +2295,22 @@ export default function App() {
                           }`}
                         >
                           <div className="font-semibold text-xs">{f.name}</div>
-                          <div className="text-[10px] text-zinc-500 mt-0.5">{f.desc}</div>
+                          <div className="text-[0.7rem] text-zinc-500 mt-0.5">{f.desc}</div>
                         </button>
                       );
                     })}
                   </div>
                 </div>
 
-                {/* 3. Tamanho da Letra */}
+                {/* 3. Controle de Escala Tipográfica */}
                 <div>
-                  <label className="font-semibold uppercase tracking-wider text-zinc-500 text-[11px] block mb-2">
-                    Tamanho da Letra
+                  <label className="font-semibold uppercase tracking-wider text-zinc-500 text-[0.75rem] block mb-2">
+                    Escala Tipográfica
                   </label>
                   <div className="grid grid-cols-3 gap-2.5">
                     {[
                       { id: 'small', label: 'Pequena', size: '13px' },
-                      { id: 'medium', label: 'Média (Padrão)', size: '15px' },
+                      { id: 'medium', label: 'Média', size: '15px' },
                       { id: 'large', label: 'Grande', size: '17px' }
                     ].map(sz => {
                       const isSelected = fontSize === sz.id;
@@ -2411,7 +2330,7 @@ export default function App() {
                           }`}
                         >
                           <div className="font-semibold text-xs">{sz.label}</div>
-                          <div className="text-[10px] text-zinc-500 font-mono mt-0.5">
+                          <div className="text-[0.7rem] text-zinc-500 font-mono mt-0.5">
                             {sz.size}
                           </div>
                         </button>
@@ -2429,13 +2348,12 @@ export default function App() {
                   }`}
                 >
                   <div className="flex items-center justify-between mb-2.5">
-                    <span className="text-[11px] font-semibold uppercase tracking-wider text-zinc-500 flex items-center gap-1.5">
+                    <span className="text-[0.75rem] font-semibold uppercase tracking-wider text-zinc-500 flex items-center gap-1.5">
                       <Sparkles className="w-3.5 h-3.5 text-blue-500" />
                       <span>Pré-visualização em Tempo Real</span>
                     </span>
-                    <span className="text-[10px] px-2 py-0.5 rounded font-mono border bg-blue-500/10 text-blue-500 border-blue-500/20">
-                      {fontFamily} •{' '}
-                      {fontSize === 'small' ? '13px' : fontSize === 'large' ? '17px' : '15px'} •{' '}
+                    <span className="text-[0.7rem] px-2 py-0.5 rounded font-mono border bg-blue-500/10 text-blue-500 border-blue-500/20">
+                      {fontFamily} • {getFontSizePx(fontSize)} •{' '}
                       {theme === 'dark' ? 'Black' : 'White'}
                     </span>
                   </div>
@@ -2449,34 +2367,18 @@ export default function App() {
                     }`}
                   >
                     <span className="font-semibold text-xs block mb-1">
-                      Exemplo: Sistema de Gerenciamento de Backlog
+                      Backlog
                     </span>
                     <p className="text-xs text-zinc-400 leading-relaxed">
-                      Este texto reflete instantaneamente a fonte selecionada ({fontFamily}), o
-                      tamanho da letra e o contraste confortável do tema.
+                      Este texto reflete instantaneamente a fonte selecionada ({fontFamily}), a
+                      escala tipográfica ({getFontSizePx(fontSize)}) e o contraste do tema.
                     </p>
                   </div>
                 </div>
               </div>
             ) : (
-              /* ABA DE SEGURANÇA, .ENV & SUPABASE */
-              <div className="p-4 sm:p-6 overflow-y-auto space-y-6 text-xs">
-                <div className="p-4 rounded-xl border border-blue-500/30 bg-blue-500/5 space-y-2">
-                  <div className="font-semibold text-xs flex items-center gap-2">
-                    <ShieldCheck className="w-4 h-4 text-blue-500" />
-                    <span>Proteção de Credenciais (.env + .gitignore + .htaccess)</span>
-                  </div>
-                  <p className="text-[11px] text-zinc-400 leading-relaxed">
-                    Seu e-mail e senha exclusivos de acesso são lidos diretamente do arquivo{' '}
-                    <code className="font-mono text-blue-400">.env</code> na raiz do projeto. O
-                    arquivo <code className="font-mono text-blue-400">.env</code> está listado no{' '}
-                    <code className="font-mono text-blue-400">.gitignore</code> (para nunca ser
-                    enviado ao GitHub) e bloqueado pelo{' '}
-                    <code className="font-mono text-blue-400">.htaccess</code> contra acesso via
-                    navegador.
-                  </p>
-                </div>
-
+              /* ABA DE BACKUP E RESTAURAÇÃO */
+              <div className="p-4 sm:p-6 overflow-y-auto space-y-4 text-xs">
                 <div
                   className={`p-4 rounded-xl border space-y-3 ${
                     theme === 'dark'
@@ -2484,92 +2386,23 @@ export default function App() {
                       : 'bg-white border-slate-200'
                   }`}
                 >
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <Database className="w-4 h-4 text-emerald-500" />
-                      <h4 className="font-semibold text-xs">
-                        Banco de Dados na Nuvem — Supabase
-                      </h4>
-                    </div>
-                    <span
-                      className={`text-[10px] px-2 py-0.5 rounded-full font-mono border ${
-                        supabaseConfigured
-                          ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
-                          : 'bg-amber-500/10 text-amber-400 border-amber-500/30'
-                      }`}
-                    >
-                      {supabaseConfigured ? 'Conectado ao Supabase' : 'Aguardando chaves no .env'}
-                    </span>
-                  </div>
-
-                  <ol className="list-decimal list-inside space-y-1 text-[11px] text-zinc-400">
-                    <li>
-                      No painel do Supabase, abra o <strong>SQL Editor</strong> e execute o script{' '}
-                      <code className="font-mono text-blue-400">supabase_schema.sql</code>.
-                    </li>
-                    <li>
-                      No arquivo <code className="font-mono text-blue-400">.env</code>, preencha{' '}
-                      <code className="font-mono">SUPABASE_URL</code> e{' '}
-                      <code className="font-mono">SUPABASE_KEY</code>.
-                    </li>
-                    <li>
-                      Clique no botão abaixo para sincronizar todas as suas pastas e ideias com a
-                      nuvem do Supabase.
-                    </li>
-                  </ol>
-
-                  {secFeedback && (
-                    <div
-                      className={`p-3 rounded-xl border text-xs ${
-                        secFeedback.type === 'ok'
-                          ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'
-                          : 'bg-rose-500/10 border-rose-500/30 text-rose-400'
-                      }`}
-                    >
-                      {secFeedback.text}
-                    </div>
-                  )}
-
-                  <div className="flex flex-wrap items-center gap-3 pt-1">
-                    <button
-                      type="button"
-                      disabled={syncingSupabase}
-                      onClick={handleSyncSupabase}
-                      className="px-3.5 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-medium flex items-center gap-1.5 cursor-pointer transition-colors"
-                    >
-                      <Database className="w-3.5 h-3.5" />
-                      <span>
-                        {syncingSupabase
-                          ? 'Sincronizando...'
-                          : 'Sincronizar Dados com o Supabase'}
-                      </span>
-                    </button>
-                  </div>
-                </div>
-
-                {/* Seção de Backup e Restauração */}
-                <div
-                  className={`pt-4 border-t space-y-3 ${
-                    theme === 'dark' ? 'border-zinc-800' : 'border-slate-200'
-                  }`}
-                >
                   <div className="flex items-center gap-2">
                     <Download className="w-4 h-4 text-emerald-500" />
                     <h4 className="font-semibold text-xs">
-                      Backup Local e Restauração (JSON)
+                      Backup e Restauração (JSON)
                     </h4>
                   </div>
-                  <p className="text-[11px] text-zinc-500">
-                    Exporte uma cópia física das suas pastas e ideias a qualquer momento.
+                  <p className="text-[0.75rem] text-zinc-500">
+                    Exporte ou restaure uma cópia de segurança das suas pastas e itens do backlog.
                   </p>
-                  <div className="flex flex-wrap items-center gap-3">
+                  <div className="flex flex-wrap items-center gap-3 pt-1">
                     <button
                       type="button"
                       onClick={handleExportBackup}
                       className="px-3.5 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-medium flex items-center gap-1.5 cursor-pointer transition-colors"
                     >
                       <Download className="w-3.5 h-3.5" />
-                      <span>Exportar Backup Agora</span>
+                      <span>Exportar Backup (.json)</span>
                     </button>
 
                     <input
@@ -2604,8 +2437,8 @@ export default function App() {
                   : 'border-slate-200 bg-white'
               }`}
             >
-              <span className="text-[11px] text-zinc-500">
-                Suas preferências ficam salvas automaticamente.
+              <span className="text-[0.75rem] text-zinc-500">
+                Preferências salvas automaticamente no navegador.
               </span>
               <button
                 type="button"
@@ -2619,7 +2452,7 @@ export default function App() {
         </div>
       )}
 
-      {/* MODAL DE CRIAÇÃO DE PASTA COM SELETOR DE COR */}
+      {/* MODAL DE CRIAÇÃO DE PASTA */}
       {showNewProjectModal && (
         <div className="fixed inset-0 bg-black/70 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-in fade-in duration-150">
           <div
@@ -2744,7 +2577,7 @@ export default function App() {
             <div className="flex items-center justify-between pb-3 border-b border-zinc-800/80 mb-4">
               <div className="flex items-center gap-2">
                 <Edit3 className="w-4 h-4 text-blue-500" />
-                <h3 className="font-semibold text-sm">Editar Ideia</h3>
+                <h3 className="font-semibold text-sm">Editar Item</h3>
               </div>
               <button
                 type="button"

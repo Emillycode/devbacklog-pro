@@ -43,11 +43,11 @@ export function getFontFamilyCss(family: FontFamily): string {
     case 'Helvetica / Arial':
       return '"Helvetica Neue", Helvetica, Arial, sans-serif';
     case 'Montserrat':
-      return '"Montserrat", sans-serif';
+      return '"Montserrat", "Helvetica Neue", Helvetica, Arial, sans-serif';
     case 'Roboto':
-      return '"Roboto", sans-serif';
+      return '"Roboto", "Helvetica Neue", Helvetica, Arial, sans-serif';
     case 'Open Sans / Lato':
-      return '"Open Sans", "Lato", sans-serif';
+      return '"Open Sans", "Lato", "Helvetica Neue", Helvetica, Arial, sans-serif';
     default:
       return '"Helvetica Neue", Helvetica, Arial, sans-serif';
   }

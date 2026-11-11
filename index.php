@@ -1,6 +1,6 @@
 <?php
 /**
- * Backlog & Ideias - Plataforma Web Segura & Visual (WAMP + API Unificada)
+ * Backlog
  * Integrado ao core de segurança e persistência (api.php)
  */
 
@@ -15,7 +15,7 @@ header('X-Frame-Options: SAMEORIGIN');
 $auth_config = load_auth_config($AUTH_FILE);
 $csrf_token = get_csrf_token();
 
-// Configurações Visuais via Cookie
+// Configurações Visuais via Cookie (sincronizadas com localStorage no cliente)
 $theme = $_COOKIE['app_theme'] ?? 'dark';
 if (!in_array($theme, ['dark', 'light'], true)) {
     $theme = 'dark';
@@ -26,7 +26,7 @@ if (!in_array($font_size, ['small', 'medium', 'large'], true)) {
     $font_size = 'medium';
 }
 
-$font_family = $_COOKIE['app_font_family'] ?? 'Roboto';
+$font_family = isset($_COOKIE['app_font_family']) ? rawurldecode($_COOKIE['app_font_family']) : 'Roboto';
 if (!in_array($font_family, ['Helvetica / Arial', 'Montserrat', 'Roboto', 'Open Sans / Lato'], true)) {
     $font_family = 'Roboto';
 }
@@ -135,12 +135,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $redirect_project = $_POST['current_project'] ?? 'all';
     $redirect_filter = $_POST['current_filter'] ?? 'all';
 
-    // Login exclusivo por E-mail e Senha configurados no .env
+    // Login
     if ($action === 'login') {
         $now = time();
         if (($auth_config['lockout_until'] ?? 0) > $now) {
             $wait = (int)$auth_config['lockout_until'] - $now;
-            $login_error = "Muitas tentativas falhas. Aguarde {$wait} segundos por segurança.";
+            $login_error = "Muitas tentativas falhas. Aguarde {$wait} segundos.";
         } else {
             $email = trim($_POST['email'] ?? '');
             $password = $_POST['password'] ?? '';
@@ -162,7 +162,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $auth_config['failed_attempts'] = 0;
                 }
                 save_auth_config($AUTH_FILE, $auth_config);
-                $login_error = 'Acesso negado: E-mail ou senha inválidos.';
+                $login_error = 'E-mail ou senha inválidos.';
             }
         }
     }
@@ -180,7 +180,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if ($action !== 'login' && is_authenticated($auth_config)) {
         $posted_csrf = $_POST['csrf_token'] ?? '';
         if (!verify_csrf_token($posted_csrf)) {
-            die('Token de segurança CSRF inválido. Por favor, volte e recarregue a página.');
+            die('Token de segurança inválido. Por favor, recarregue a página.');
         }
 
         $data = load_app_data($DATA_FILE);
@@ -362,17 +362,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         }
 
-        // 7. Sincronizar com Supabase
-        if ($action === 'sync_supabase') {
-            $local_raw = file_exists($DATA_FILE) ? json_decode((string)file_get_contents($DATA_FILE), true) : ['projetos' => [], 'tarefas' => []];
-            $sync_res = sync_all_to_supabase($ENV, is_array($local_raw) ? $local_raw : ['projetos' => [], 'tarefas' => []]);
-            if ($sync_res['ok']) {
-                $_SESSION['sec_feedback'] = ['type' => 'ok', 'text' => 'Todas as pastas e ideias foram sincronizadas com o Supabase!'];
-            } else {
-                $_SESSION['sec_feedback'] = ['type' => 'err', 'text' => $sync_res['error'] ?? 'Falha ao sincronizar com o Supabase.'];
-            }
-        }
-
         // 7. Salvar Configurações Visuais
         if ($action === 'save_settings') {
             $new_theme = $_POST['theme'] ?? 'dark';
@@ -381,38 +370,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
             setcookie('app_theme', $new_theme, time() + 31536000, '/');
             setcookie('app_font_size', $new_font_size, time() + 31536000, '/');
-            setcookie('app_font_family', $new_font_family, time() + 31536000, '/');
+            setcookie('app_font_family', rawurlencode($new_font_family), time() + 31536000, '/');
         }
 
-        // 8. Salvar Configurações de Segurança (Senha / PIN)
-        if ($action === 'update_security') {
-            $current_pass = trim($_POST['current_password'] ?? '');
-            $new_pass = trim($_POST['new_password'] ?? '');
-            $new_pin = trim($_POST['new_pin'] ?? '');
-            $require_auth = isset($_POST['require_auth']) && $_POST['require_auth'] === '1';
-
-            $valid_current = password_verify($current_pass, $auth_config['password_hash'] ?? '')
-                || (!empty($auth_config['pin_hash']) && password_verify($current_pass, $auth_config['pin_hash']));
-
-            if (!$valid_current) {
-                $_SESSION['sec_feedback'] = ['type' => 'err', 'text' => 'Senha ou PIN atual incorreto.'];
-            } else {
-                if ($new_pass !== '' && strlen($new_pass) >= 4) {
-                    $auth_config['password_hash'] = password_hash($new_pass, PASSWORD_BCRYPT);
-                    $auth_config['is_default_password'] = false;
-                }
-                if ($new_pin !== '' && preg_match('/^\d{4,8}$/', $new_pin)) {
-                    $auth_config['pin_hash'] = password_hash($new_pin, PASSWORD_BCRYPT);
-                    $auth_config['is_default_password'] = false;
-                }
-                $auth_config['require_auth'] = $require_auth;
-                $auth_config['updated_at'] = date('Y-m-d H:i:s');
-                save_auth_config($AUTH_FILE, $auth_config);
-                $_SESSION['sec_feedback'] = ['type' => 'ok', 'text' => 'Credenciais de segurança atualizadas com sucesso!'];
-            }
-        }
-
-        // 9. Importar Backup JSON
+        // 8. Importar Backup JSON
         if ($action === 'import_backup' && isset($_FILES['backup_file']) && $_FILES['backup_file']['error'] === UPLOAD_ERR_OK) {
             $raw_json = (string)file_get_contents($_FILES['backup_file']['tmp_name']);
             $decoded = json_decode($raw_json, true);
@@ -433,9 +394,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 $font_family_css = match($font_family) {
-    'Montserrat' => '"Montserrat", sans-serif',
-    'Roboto' => '"Roboto", sans-serif',
-    'Open Sans / Lato' => '"Open Sans", "Lato", sans-serif',
+    'Montserrat' => '"Montserrat", "Helvetica Neue", Helvetica, Arial, sans-serif',
+    'Roboto' => '"Roboto", "Helvetica Neue", Helvetica, Arial, sans-serif',
+    'Open Sans / Lato' => '"Open Sans", "Lato", "Helvetica Neue", Helvetica, Arial, sans-serif',
     default => '"Helvetica Neue", Helvetica, Arial, sans-serif'
 };
 
@@ -579,7 +540,7 @@ function render_task_card_html(array $task, array $projetos, array $folder_color
                     <input type="hidden" name="current_filter" value="<?= h($status_filter) ?>">
                     <button type="submit"
                             class="w-4 h-4 rounded border flex items-center justify-center transition-colors cursor-pointer <?= $is_done ? 'bg-emerald-600 border-emerald-600 text-white' : ($is_prog ? 'border-amber-500 bg-amber-500/15 text-amber-500' : 'border-slate-400 hover:border-slate-600 bg-white dark:border-zinc-600 dark:hover:border-zinc-400 dark:bg-dark-input') ?>"
-                            title="<?= $is_done ? 'Reabrir ideia' : 'Concluir ideia' ?>">
+                            title="<?= $is_done ? 'Reabrir item' : 'Concluir item' ?>">
                         <?php if ($is_done): ?>
                             <svg class="w-3 h-3 stroke-[3]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"></path></svg>
                         <?php elseif ($is_prog): ?>
@@ -589,26 +550,26 @@ function render_task_card_html(array $task, array $projetos, array $folder_color
                 </form>
 
                 <div class="flex-1 min-w-0">
-                    <div class="font-semibold tracking-tight leading-snug <?= $is_done ? 'line-through text-slate-400 dark:text-zinc-500' : 'text-slate-900 dark:text-zinc-100' ?>">
+                    <div class="text-sm font-semibold tracking-tight leading-snug <?= $is_done ? 'line-through text-slate-400 dark:text-zinc-500' : 'text-slate-900 dark:text-zinc-100' ?>">
                         <?= h($task['titulo']) ?>
                     </div>
 
                     <div class="flex flex-wrap items-center gap-1.5 mt-1.5">
-                        <span class="text-[10px] px-1.5 py-0.5 rounded border uppercase tracking-wider font-mono <?= $prio_class ?>">
+                        <span class="text-[0.7rem] px-1.5 py-0.5 rounded border uppercase tracking-wider font-mono <?= $prio_class ?>">
                             <?= h($task['prioridade']) ?>
                         </span>
 
                         <?php if (!empty($task['data_limite'])): ?>
-                            <span class="text-[10px] px-1.5 py-0.5 rounded border font-mono flex items-center gap-1 <?= $due['badge_class'] ?>">
+                            <span class="text-[0.7rem] px-1.5 py-0.5 rounded border font-mono flex items-center gap-1 <?= $due['badge_class'] ?>">
                                 <svg class="w-2.5 h-2.5 opacity-70" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2z"></path></svg>
                                 <?= h($due['label']) ?>
                             </span>
                         <?php endif; ?>
 
                         <?php if ($selected_project_id === 'all' && $folder_name !== ''): ?>
-                            <span class="text-[10px] px-1.5 py-0.5 rounded border flex items-center gap-1.5 <?= $f_style['badge'] ?>">
+                            <span class="text-[0.7rem] px-1.5 py-0.5 rounded border flex items-center gap-1.5 <?= $f_style['badge'] ?>">
                                 <span class="w-1.5 h-1.5 rounded-full <?= $f_style['dot'] ?>"></span>
-                                <span class="truncate max-w-[120px]"><?= h($folder_name) ?></span>
+                                <span class="truncate max-w-[8rem]"><?= h($folder_name) ?></span>
                             </span>
                         <?php endif; ?>
                     </div>
@@ -627,9 +588,9 @@ function render_task_card_html(array $task, array $projetos, array $folder_color
                                         class="text-xs px-2.5 py-1 rounded-lg border font-medium bg-slate-100 hover:bg-slate-200 border-slate-300 text-slate-700 dark:bg-zinc-800 dark:hover:bg-zinc-700 dark:border-zinc-700 dark:text-zinc-300 flex items-center gap-1.5 cursor-pointer transition-colors">
                                     <svg class="w-3.5 h-3.5 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"></path></svg>
                                     <span id="btn-text-<?= h($task['id']) ?>">Anexo</span>
-                                    <span class="text-[10px] opacity-75 font-mono truncate max-w-[110px]">(<?= h($task['anexo']['nome_original']) ?>)</span>
+                                    <span class="text-[0.7rem] opacity-75 font-mono truncate max-w-[7rem]">(<?= h($task['anexo']['nome_original']) ?>)</span>
                                 </button>
-                                <span class="text-[10px] text-zinc-500 font-mono"><?= h($task['anexo']['tamanho_formatado'] ?? '') ?></span>
+                                <span class="text-[0.7rem] text-zinc-500 font-mono"><?= h($task['anexo']['tamanho_formatado'] ?? '') ?></span>
                             </div>
 
                             <div id="media-box-<?= h($task['id']) ?>" class="hidden mt-2 p-2 rounded-xl border border-slate-200 dark:border-zinc-800 bg-[#eef2f6] dark:bg-[#101012]">
@@ -649,7 +610,7 @@ function render_task_card_html(array $task, array $projetos, array $folder_color
 
                     <!-- Rodapé do Card com Ações Rápidas de Etapa -->
                     <div class="flex flex-wrap items-center justify-between gap-2 mt-2.5 pt-2 border-t border-slate-200/50 dark:border-zinc-800/50">
-                        <span class="text-[10px] text-zinc-400 dark:text-zinc-500 font-mono">
+                        <span class="text-[0.7rem] text-zinc-400 dark:text-zinc-500 font-mono">
                             <?= date('d/m/Y H:i', strtotime($task['criado_em'])) ?>
                         </span>
 
@@ -657,25 +618,25 @@ function render_task_card_html(array $task, array $projetos, array $folder_color
                             <?php if ($status === 'pendente'): ?>
                                 <button type="button"
                                         onclick="quickMoveStatus('<?= h($task['id']) ?>', 'em_andamento')"
-                                        class="text-[10px] px-2 py-0.5 rounded-md border bg-amber-50 hover:bg-amber-100 text-amber-800 border-amber-200 dark:bg-amber-950/30 dark:hover:bg-amber-900/50 dark:text-amber-300 dark:border-amber-800/50 flex items-center gap-1 cursor-pointer">
+                                        class="text-[0.7rem] px-2 py-0.5 rounded-md border bg-amber-50 hover:bg-amber-100 text-amber-800 border-amber-200 dark:bg-amber-950/30 dark:hover:bg-amber-900/50 dark:text-amber-300 dark:border-amber-800/50 flex items-center gap-1 cursor-pointer">
                                     <span>▶ Iniciar</span>
                                 </button>
                             <?php elseif ($status === 'em_andamento'): ?>
                                 <button type="button"
                                         onclick="quickMoveStatus('<?= h($task['id']) ?>', 'pendente')"
-                                        class="text-[10px] px-1.5 py-0.5 rounded-md border bg-slate-100 hover:bg-slate-200 text-slate-600 border-slate-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 dark:text-zinc-300 dark:border-zinc-700 cursor-pointer"
+                                        class="text-[0.7rem] px-1.5 py-0.5 rounded-md border bg-slate-100 hover:bg-slate-200 text-slate-600 border-slate-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 dark:text-zinc-300 dark:border-zinc-700 cursor-pointer"
                                         title="Voltar para Pendente">
                                     ←
                                 </button>
                                 <button type="button"
                                         onclick="quickMoveStatus('<?= h($task['id']) ?>', 'concluido')"
-                                        class="text-[10px] px-2 py-0.5 rounded-md border bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border-emerald-200 dark:bg-emerald-950/40 dark:hover:bg-emerald-900/60 dark:text-emerald-300 dark:border-emerald-800/50 flex items-center gap-1 cursor-pointer">
+                                        class="text-[0.7rem] px-2 py-0.5 rounded-md border bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border-emerald-200 dark:bg-emerald-950/40 dark:hover:bg-emerald-900/60 dark:text-emerald-300 dark:border-emerald-800/50 flex items-center gap-1 cursor-pointer">
                                     <span>✓ Concluir</span>
                                 </button>
                             <?php else: ?>
                                 <button type="button"
                                         onclick="quickMoveStatus('<?= h($task['id']) ?>', 'pendente')"
-                                        class="text-[10px] px-2 py-0.5 rounded-md border bg-slate-100 hover:bg-slate-200 text-slate-600 border-slate-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 dark:text-zinc-400 dark:border-zinc-700 cursor-pointer">
+                                        class="text-[0.7rem] px-2 py-0.5 rounded-md border bg-slate-100 hover:bg-slate-200 text-slate-600 border-slate-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 dark:text-zinc-400 dark:border-zinc-700 cursor-pointer">
                                     ↺ Reabrir
                                 </button>
                             <?php endif; ?>
@@ -689,11 +650,11 @@ function render_task_card_html(array $task, array $projetos, array $folder_color
                 <button type="button"
                         onclick='openEditTaskModal(<?= json_encode($task, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP) ?>)'
                         class="p-1.5 rounded-md text-slate-500 hover:text-slate-900 hover:bg-slate-200 dark:text-zinc-400 dark:hover:text-zinc-200 dark:hover:bg-zinc-800 transition-colors cursor-pointer"
-                        title="Editar ideia">
+                        title="Editar item">
                     <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path></svg>
                 </button>
 
-                <form method="POST" action="index.php" onsubmit="return confirm('Excluir esta ideia de backlog?');">
+                <form method="POST" action="index.php" onsubmit="return confirm('Excluir este item do backlog?');">
                     <input type="hidden" name="action" value="delete_task">
                     <input type="hidden" name="csrf_token" value="<?= h($csrf_token) ?>">
                     <input type="hidden" name="task_id" value="<?= h($task['id']) ?>">
@@ -701,7 +662,7 @@ function render_task_card_html(array $task, array $projetos, array $folder_color
                     <input type="hidden" name="current_filter" value="<?= h($status_filter) ?>">
                     <button type="submit"
                             class="p-1.5 rounded-md text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:text-zinc-500 dark:hover:text-rose-400 dark:hover:bg-rose-950/30 transition-colors cursor-pointer"
-                            title="Excluir ideia">
+                            title="Excluir item">
                         <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
                     </button>
                 </form>
@@ -712,15 +673,51 @@ function render_task_card_html(array $task, array $projetos, array $folder_color
 }
 ?>
 <!DOCTYPE html>
-<html lang="pt-BR" class="<?= $theme === 'dark' ? 'dark' : '' ?>" style="font-size: <?= $font_size_px ?>;">
+<html lang="pt-BR" class="<?= $theme === 'dark' ? 'dark' : 'light' ?>" data-theme="<?= h($theme) ?>" style="font-size: <?= $font_size_px ?>; --app-font-size: <?= $font_size_px ?>; --app-font-family: <?= h($font_family_css) ?>;">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Backlog & Ideias — Plataforma Segura & Kanban</title>
+    <title>Backlog</title>
+    <meta name="description" content="Backlog — Gerenciamento de projetos e ideias.">
+    <meta property="og:title" content="Backlog">
+    <meta property="og:description" content="Backlog — Gerenciamento de projetos e ideias.">
 
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Lato:ital,wght@0,400;0,700;1,400&family=Montserrat:ital,wght@0,400;0,500;0,600;0,700;1,400&family=Open+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&family=Roboto:ital,wght@0,400;0,500;0,700;1,400&display=swap" rel="stylesheet">
+
+    <script>
+        (function () {
+            try {
+                var savedTheme = localStorage.getItem('app_theme');
+                var theme = (savedTheme === 'dark' || savedTheme === 'light') ? savedTheme : <?= json_encode($theme) ?>;
+                var root = document.documentElement;
+                root.classList.remove('dark', 'light');
+                root.classList.add(theme);
+                root.setAttribute('data-theme', theme);
+                root.style.colorScheme = theme;
+
+                var savedSize = localStorage.getItem('app_font_size');
+                var size = (savedSize === 'small' || savedSize === 'medium' || savedSize === 'large') ? savedSize : <?= json_encode($font_size) ?>;
+                var sizeMap = { small: '13px', medium: '15px', large: '17px' };
+                var sizePx = sizeMap[size] || '15px';
+                root.style.fontSize = sizePx;
+                root.style.setProperty('--app-font-size', sizePx);
+
+                var savedFamily = localStorage.getItem('app_font_family');
+                var familyMap = {
+                    'Helvetica / Arial': '"Helvetica Neue", Helvetica, Arial, sans-serif',
+                    'Montserrat': '"Montserrat", "Helvetica Neue", Helvetica, Arial, sans-serif',
+                    'Roboto': '"Roboto", "Helvetica Neue", Helvetica, Arial, sans-serif',
+                    'Open Sans / Lato': '"Open Sans", "Lato", "Helvetica Neue", Helvetica, Arial, sans-serif'
+                };
+                var family = (savedFamily && familyMap[savedFamily]) ? savedFamily : <?= json_encode($font_family) ?>;
+                var familyCss = familyMap[family] || familyMap['Roboto'];
+                root.style.setProperty('--app-font-family', familyCss);
+                root.style.fontFamily = familyCss;
+            } catch (e) {}
+        })();
+    </script>
 
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
@@ -728,6 +725,9 @@ function render_task_card_html(array $task, array $projetos, array $folder_color
             darkMode: 'class',
             theme: {
                 extend: {
+                    fontFamily: {
+                        sans: ['var(--app-font-family)', 'Helvetica Neue', 'Helvetica', 'Arial', 'sans-serif']
+                    },
                     colors: {
                         dark: {
                             base: '#09090b',
@@ -752,10 +752,17 @@ function render_task_card_html(array $task, array $projetos, array $folder_color
             }
         }
     </script>
-    <style>
-        html { font-size: <?= $font_size_px ?> !important; }
-        body, button, input, select, textarea {
-            font-family: <?= $font_family_css ?> !important;
+    <style id="app-custom-styles">
+        :root {
+            --app-font-family: <?= $font_family_css ?>;
+            --app-font-size: <?= $font_size_px ?>;
+        }
+        html {
+            font-size: var(--app-font-size, 15px) !important;
+            font-family: var(--app-font-family) !important;
+        }
+        body, #app-root, button, input, select, textarea {
+            font-family: var(--app-font-family) !important;
             transition: background-color 0.2s ease, color 0.2s ease;
         }
         ::-webkit-scrollbar { width: 6px; height: 6px; }
@@ -764,31 +771,38 @@ function render_task_card_html(array $task, array $projetos, array $folder_color
         ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
     </style>
 </head>
-<body class="bg-light-base dark:bg-dark-base text-slate-800 dark:text-zinc-200 min-h-screen flex flex-col antialiased">
+<body id="app-root" data-theme="<?= h($theme) ?>" class="<?= $theme === 'dark' ? 'dark' : 'light' ?> bg-light-base dark:bg-dark-base text-slate-800 dark:text-zinc-200 min-h-screen flex flex-col antialiased">
 
 <?php if (!$is_user_authenticated): ?>
-    <!-- TELA DE BLOQUEIO / LOGIN EXCLUSIVO COM E-MAIL E SENHA -->
-    <div class="min-h-screen flex items-center justify-center p-4">
-        <div class="w-full max-w-md rounded-2xl border bg-white dark:bg-dark-panel border-light-border dark:border-dark-border p-6 sm:p-8 shadow-2xl">
+    <!-- TELA DE AUTENTICAÇÃO LIMPA E MINIMALISTA -->
+    <div class="min-h-screen flex items-center justify-center p-4 relative">
+        <button type="button"
+                onclick="toggleQuickTheme()"
+                class="absolute top-4 right-4 p-2.5 rounded-xl border border-light-border dark:border-dark-border bg-white dark:bg-dark-panel text-slate-700 dark:text-zinc-300 hover:bg-slate-100 dark:hover:bg-zinc-800 transition-colors cursor-pointer shadow-2xs"
+                title="Alternar tema">
+            <span class="dark:hidden">🌙</span>
+            <span class="hidden dark:inline">☀️</span>
+        </button>
+
+        <div class="w-full max-w-sm rounded-2xl border bg-white dark:bg-dark-panel border-light-border dark:border-dark-border p-6 sm:p-8 shadow-2xl">
             <div class="flex flex-col items-center text-center mb-6">
                 <div class="w-12 h-12 rounded-2xl bg-blue-600/15 border border-blue-500/30 flex items-center justify-center text-blue-500 mb-3">
                     <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"></path></svg>
                 </div>
-                <h1 class="text-base sm:text-lg font-bold tracking-tight text-slate-900 dark:text-zinc-100">Acesso Restrito — Backlog & Ideias</h1>
-                <p class="text-xs text-zinc-500 mt-1">Acesso exclusivo com o E-mail e Senha configurados no seu arquivo seguro <code class="font-mono">.env</code>.</p>
+                <h1 class="text-lg font-bold tracking-tight text-slate-900 dark:text-zinc-100">Acesso Restrito</h1>
             </div>
 
             <form method="POST" action="index.php" class="space-y-4">
                 <input type="hidden" name="action" value="login">
                 <div>
-                    <label class="block text-[11px] font-semibold uppercase tracking-wider text-zinc-500 mb-1.5">E-mail Autorizado</label>
-                    <input type="email" name="email" autofocus required placeholder="seu_email@dominio.com"
+                    <label class="block text-[0.75rem] font-semibold uppercase tracking-wider text-zinc-500 mb-1.5">E-mail</label>
+                    <input type="email" name="email" autofocus required placeholder="seu@email.com"
                            class="w-full text-sm px-4 py-2.5 rounded-xl border bg-slate-50 dark:bg-dark-card border-slate-300 dark:border-dark-border text-slate-900 dark:text-zinc-100 focus:outline-none focus:border-blue-500">
                 </div>
 
                 <div>
-                    <label class="block text-[11px] font-semibold uppercase tracking-wider text-zinc-500 mb-1.5">Senha de Acesso</label>
-                    <input type="password" name="password" required placeholder="Digite sua senha..."
+                    <label class="block text-[0.75rem] font-semibold uppercase tracking-wider text-zinc-500 mb-1.5">Senha</label>
+                    <input type="password" name="password" required placeholder="••••••••"
                            class="w-full text-sm px-4 py-2.5 rounded-xl border bg-slate-50 dark:bg-dark-card border-slate-300 dark:border-dark-border text-slate-900 dark:text-zinc-100 focus:outline-none focus:border-blue-500">
                 </div>
 
@@ -799,13 +813,8 @@ function render_task_card_html(array $task, array $projetos, array $folder_color
                 <?php endif; ?>
 
                 <button type="submit" class="w-full py-2.5 px-4 bg-blue-600 hover:bg-blue-500 text-white font-semibold text-xs rounded-xl shadow-md transition-colors cursor-pointer">
-                    Entrar na Plataforma
+                    Entrar
                 </button>
-
-                <div class="p-3 rounded-xl border bg-slate-100 dark:bg-zinc-900/80 border-slate-200 dark:border-zinc-800 text-[11px] text-slate-600 dark:text-zinc-400 leading-relaxed">
-                    <strong class="text-blue-500 block mb-0.5">Segurança de Credenciais (.env + .gitignore):</strong>
-                    Suas credenciais (<code class="font-mono">ADMIN_EMAIL</code> e <code class="font-mono">ADMIN_PASSWORD</code>) e chaves do Supabase ficam isoladas exclusivamente no arquivo local <code class="font-mono">.env</code>, protegido contra acesso web via <code class="font-mono">.htaccess</code> e ignorado pelo Git.
-                </div>
             </form>
         </div>
     </div>
@@ -819,18 +828,10 @@ function render_task_card_html(array $task, array $projetos, array $folder_color
             </button>
 
             <div class="flex items-center gap-2.5">
-                <div class="w-8 h-8 rounded-lg bg-blue-600/15 border border-blue-500/30 flex items-center justify-center text-blue-500">
+                <div class="w-8 h-8 rounded-lg bg-blue-600 dark:bg-blue-600/15 border border-blue-600 dark:border-blue-500/30 flex items-center justify-center text-white dark:text-blue-400">
                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"></path></svg>
                 </div>
-                <div>
-                    <h1 class="font-bold text-xs sm:text-sm tracking-tight text-slate-900 dark:text-zinc-100 leading-none">Backlog & Ideias</h1>
-                    <div class="flex items-center gap-1.5 mt-0.5">
-                        <span class="w-1.5 h-1.5 rounded-full <?= $supabase_active ? 'bg-emerald-500' : 'bg-blue-500' ?>"></span>
-                        <span class="text-[10px] text-zinc-500 font-mono hidden xs:inline">
-                            <?= $supabase_active ? 'Supabase Cloud Ativo' : 'Backend Seguro (.env)' ?>
-                        </span>
-                    </div>
-                </div>
+                <h1 class="font-bold text-sm sm:text-base tracking-tight text-slate-900 dark:text-zinc-100 leading-none">Backlog</h1>
             </div>
 
             <!-- Seletor de Visão: Kanban vs Lista -->
@@ -848,8 +849,16 @@ function render_task_card_html(array $task, array $projetos, array $folder_color
             </div>
         </div>
 
-        <!-- Direita: Backup, Trancar Tela e Engrenagem -->
+        <!-- Direita: Tema, Backup, Trancar Tela e Engrenagem -->
         <div class="flex items-center gap-2 ml-auto">
+            <button type="button"
+                    onclick="toggleQuickTheme()"
+                    class="p-2 rounded-lg border border-light-border dark:border-dark-border bg-white dark:bg-zinc-900 text-slate-700 dark:text-zinc-300 hover:bg-slate-100 dark:hover:bg-zinc-800 flex items-center justify-center transition-colors cursor-pointer"
+                    title="Alternar Tema Black / White">
+                <svg class="w-4 h-4 text-amber-400 hidden dark:block" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"></path></svg>
+                <svg class="w-4 h-4 text-slate-700 block dark:hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"></path></svg>
+            </button>
+
             <a href="api.php?action=export_backup"
                class="text-xs px-2.5 py-1.5 rounded-lg bg-white dark:bg-zinc-900 hover:bg-slate-100 dark:hover:bg-zinc-800 text-slate-700 dark:text-zinc-300 border border-light-border dark:border-dark-border hidden md:flex items-center gap-1.5 transition-colors"
                title="Exportar cópia de segurança (JSON)">
@@ -861,7 +870,7 @@ function render_task_card_html(array $task, array $projetos, array $folder_color
                 <input type="hidden" name="action" value="logout">
                 <button type="submit"
                         class="text-xs px-2.5 py-1.5 rounded-lg bg-white dark:bg-zinc-900 hover:bg-rose-50 dark:hover:bg-rose-950/40 text-slate-700 dark:text-zinc-300 hover:text-rose-600 dark:hover:text-rose-300 border border-light-border dark:border-dark-border flex items-center gap-1.5 transition-colors cursor-pointer"
-                        title="Trancar tela imediatamente">
+                        title="Trancar sessão">
                     <svg class="w-3.5 h-3.5 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"></path></svg>
                     <span class="hidden sm:inline">Trancar</span>
                 </button>
@@ -869,7 +878,7 @@ function render_task_card_html(array $task, array $projetos, array $folder_color
 
             <button onclick="openModal('settings-modal')"
                     class="p-2 rounded-lg border border-light-border dark:border-dark-border bg-white dark:bg-zinc-900 text-slate-700 dark:text-zinc-300 hover:bg-slate-100 dark:hover:bg-zinc-800 flex items-center justify-center transition-colors cursor-pointer group"
-                    title="Configurações Visuais, Senha/PIN e Backups">
+                    title="Configurações Visuais e Backup">
                 <svg class="w-4 h-4 text-zinc-400 group-hover:text-blue-500 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
             </button>
         </div>
@@ -894,11 +903,11 @@ function render_task_card_html(array $task, array $projetos, array $folder_color
                         <span class="truncate">Visão Geral (Todas)</span>
                     </div>
                     <?php if ($total_active_all > 0): ?>
-                        <span class="text-[11px] px-1.5 py-0.5 rounded-full bg-white dark:bg-zinc-900 border border-slate-300 dark:border-dark-border text-slate-600 dark:text-zinc-400 font-mono"><?= $total_active_all ?></span>
+                        <span class="text-[0.75rem] px-1.5 py-0.5 rounded-full bg-white dark:bg-zinc-900 border border-slate-300 dark:border-dark-border text-slate-600 dark:text-zinc-400 font-mono"><?= $total_active_all ?></span>
                     <?php endif; ?>
                 </a>
 
-                <div class="pt-3 pb-1 px-3 text-[10px] font-semibold uppercase tracking-wider text-zinc-400 dark:text-zinc-500">Suas Pastas (<?= count($data['projetos']) ?>)</div>
+                <div class="pt-3 pb-1 px-3 text-[0.7rem] font-semibold uppercase tracking-wider text-zinc-400 dark:text-zinc-500">Suas Pastas (<?= count($data['projetos']) ?>)</div>
 
                 <?php foreach ($data['projetos'] as $p):
                     $p_id = $p['id'];
@@ -914,23 +923,23 @@ function render_task_card_html(array $task, array $projetos, array $folder_color
                             <span class="truncate"><?= h($p['nome']) ?></span>
                         </div>
                         <?php if ($p_active_count > 0): ?>
-                            <span class="text-[11px] px-1.5 py-0.5 rounded-full bg-white dark:bg-zinc-900 border border-slate-300 dark:border-dark-border text-slate-600 dark:text-zinc-400 font-mono"><?= $p_active_count ?></span>
+                            <span class="text-[0.75rem] px-1.5 py-0.5 rounded-full bg-white dark:bg-zinc-900 border border-slate-300 dark:border-dark-border text-slate-600 dark:text-zinc-400 font-mono"><?= $p_active_count ?></span>
                         <?php endif; ?>
                     </a>
                 <?php endforeach; ?>
             </nav>
 
             <div class="p-3.5 border-t border-light-border dark:border-dark-border space-y-2 bg-light-panel dark:bg-dark-panel">
-                <div class="flex items-center justify-between text-[11px]">
+                <div class="flex items-center justify-between text-[0.75rem]">
                     <span class="text-zinc-500 font-medium">Progresso Concluído</span>
                     <span class="font-mono font-semibold text-emerald-500"><?= $metric_progress_pct ?>%</span>
                 </div>
                 <div class="w-full h-1.5 rounded-full bg-slate-200 dark:bg-zinc-800 overflow-hidden">
                     <div class="h-full bg-emerald-500 transition-all duration-300" style="width: <?= $metric_progress_pct ?>%;"></div>
                 </div>
-                <div class="flex items-center justify-between text-[10px] text-zinc-500 pt-1">
-                    <span>Total: <?= count($data['tarefas']) ?> ideias</span>
-                    <button type="button" onclick="openModal('settings-modal'); switchSettingsTab('security');" class="text-blue-500 hover:underline cursor-pointer">Segurança & Backup</button>
+                <div class="flex items-center justify-between text-[0.7rem] text-zinc-500 pt-1">
+                    <span>Total: <?= count($data['tarefas']) ?> itens</span>
+                    <button type="button" onclick="openModal('settings-modal'); switchSettingsTab('visual');" class="text-blue-500 hover:underline cursor-pointer">Preferências</button>
                 </div>
             </div>
         </aside>
@@ -944,10 +953,10 @@ function render_task_card_html(array $task, array $projetos, array $folder_color
                 <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                     <div>
                         <h2 class="text-base sm:text-lg font-bold tracking-tight text-slate-900 dark:text-zinc-100">
-                            <?= ($selected_project_id === 'all') ? 'Todas as Ideias & Backlog' : h($current_project['nome'] ?? 'Projeto') ?>
+                            <?= ($selected_project_id === 'all') ? 'Backlog' : h($current_project['nome'] ?? 'Projeto') ?>
                         </h2>
                         <p class="text-xs text-zinc-500 mt-0.5">
-                            <?= ($selected_project_id !== 'all' && !empty($current_project['descricao'])) ? h($current_project['descricao']) : 'Visualização produtiva em Quadro Kanban (Arrastar e Soltar) e Lista.' ?>
+                            <?= ($selected_project_id !== 'all' && !empty($current_project['descricao'])) ? h($current_project['descricao']) : 'Visualização consolidada em Quadro Kanban e Lista.' ?>
                         </p>
                     </div>
 
@@ -967,28 +976,28 @@ function render_task_card_html(array $task, array $projetos, array $folder_color
                 <div class="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
                     <div class="p-3 rounded-xl border bg-white dark:bg-dark-card border-slate-200 dark:border-dark-border flex items-center justify-between">
                         <div>
-                            <span class="text-[10px] uppercase font-mono text-zinc-500 block">Pendentes</span>
+                            <span class="text-[0.7rem] uppercase font-mono text-zinc-500 block">Pendentes</span>
                             <span class="text-lg font-bold text-blue-500 font-mono"><?= $metric_pendentes ?></span>
                         </div>
                         <span class="w-2.5 h-2.5 rounded-full bg-blue-500"></span>
                     </div>
                     <div class="p-3 rounded-xl border bg-white dark:bg-dark-card border-slate-200 dark:border-dark-border flex items-center justify-between">
                         <div>
-                            <span class="text-[10px] uppercase font-mono text-zinc-500 block">Em Andamento</span>
+                            <span class="text-[0.7rem] uppercase font-mono text-zinc-500 block">Em Andamento</span>
                             <span class="text-lg font-bold text-amber-500 font-mono"><?= $metric_andamento ?></span>
                         </div>
                         <span class="w-2.5 h-2.5 rounded-full bg-amber-500"></span>
                     </div>
                     <div class="p-3 rounded-xl border bg-white dark:bg-dark-card border-slate-200 dark:border-dark-border flex items-center justify-between">
                         <div>
-                            <span class="text-[10px] uppercase font-mono text-zinc-500 block">Concluídas</span>
+                            <span class="text-[0.7rem] uppercase font-mono text-zinc-500 block">Concluídas</span>
                             <span class="text-lg font-bold text-emerald-500 font-mono"><?= $metric_concluidas ?></span>
                         </div>
                         <span class="w-2.5 h-2.5 rounded-full bg-emerald-500"></span>
                     </div>
                     <div class="p-3 rounded-xl border bg-white dark:bg-dark-card border-slate-200 dark:border-dark-border flex items-center justify-between">
                         <div>
-                            <span class="text-[10px] uppercase font-mono text-zinc-500 block">Urgentes / Hoje</span>
+                            <span class="text-[0.7rem] uppercase font-mono text-zinc-500 block">Urgentes / Hoje</span>
                             <span class="text-lg font-bold <?= $metric_urgentes > 0 ? 'text-rose-500' : 'text-zinc-400' ?> font-mono"><?= $metric_urgentes ?></span>
                         </div>
                         <span class="w-2.5 h-2.5 rounded-full <?= $metric_urgentes > 0 ? 'bg-rose-500' : 'bg-zinc-500' ?>"></span>
@@ -1004,7 +1013,7 @@ function render_task_card_html(array $task, array $projetos, array $folder_color
                         <input type="hidden" name="current_filter" value="<?= h($status_filter) ?>">
 
                         <div class="flex flex-col sm:flex-row gap-2">
-                            <input type="text" name="titulo" required placeholder="Adicionar nova ideia, tarefa ou funcionalidade..."
+                            <input type="text" name="titulo" required placeholder="Adicionar novo item ao backlog..."
                                    onfocus="document.getElementById('quick-form-details').classList.remove('hidden')"
                                    class="flex-1 text-xs px-3.5 py-2.5 border rounded-xl bg-slate-50 dark:bg-dark-input border-slate-300 dark:border-dark-border text-slate-900 dark:text-zinc-100 focus:outline-none focus:border-blue-500">
                             <div class="flex items-center gap-2">
@@ -1021,7 +1030,7 @@ function render_task_card_html(array $task, array $projetos, array $folder_color
                         <div id="quick-form-details" class="hidden space-y-3 pt-2 border-t border-slate-100 dark:border-dark-borderSubtle">
                             <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5">
                                 <div>
-                                    <label class="block text-[10px] uppercase font-mono text-zinc-500 mb-1">Pasta Destino</label>
+                                    <label class="block text-[0.7rem] uppercase font-mono text-zinc-500 mb-1">Pasta Destino</label>
                                     <select name="id_projeto" class="w-full text-xs px-2.5 py-2 border rounded-lg bg-slate-50 dark:bg-dark-input border-slate-300 dark:border-dark-border text-slate-800 dark:text-zinc-300">
                                         <?php foreach ($data['projetos'] as $p): ?>
                                             <option value="<?= h($p['id']) ?>" <?= ($selected_project_id === $p['id']) ? 'selected' : '' ?>><?= h($p['nome']) ?></option>
@@ -1029,7 +1038,7 @@ function render_task_card_html(array $task, array $projetos, array $folder_color
                                     </select>
                                 </div>
                                 <div>
-                                    <label class="block text-[10px] uppercase font-mono text-zinc-500 mb-1">Prioridade</label>
+                                    <label class="block text-[0.7rem] uppercase font-mono text-zinc-500 mb-1">Prioridade</label>
                                     <select name="prioridade" class="w-full text-xs px-2.5 py-2 border rounded-lg bg-slate-50 dark:bg-dark-input border-slate-300 dark:border-dark-border text-slate-800 dark:text-zinc-300">
                                         <option value="Baixa">Baixa</option>
                                         <option value="Média" selected>Média</option>
@@ -1037,7 +1046,7 @@ function render_task_card_html(array $task, array $projetos, array $folder_color
                                     </select>
                                 </div>
                                 <div>
-                                    <label class="block text-[10px] uppercase font-mono text-zinc-500 mb-1">Coluna Inicial</label>
+                                    <label class="block text-[0.7rem] uppercase font-mono text-zinc-500 mb-1">Coluna Inicial</label>
                                     <select name="status" class="w-full text-xs px-2.5 py-2 border rounded-lg bg-slate-50 dark:bg-dark-input border-slate-300 dark:border-dark-border text-slate-800 dark:text-zinc-300">
                                         <option value="pendente" selected>Pendente</option>
                                         <option value="em_andamento">Em Andamento</option>
@@ -1045,7 +1054,7 @@ function render_task_card_html(array $task, array $projetos, array $folder_color
                                     </select>
                                 </div>
                                 <div>
-                                    <label class="block text-[10px] uppercase font-mono text-zinc-500 mb-1">Prazo / Lembrete</label>
+                                    <label class="block text-[0.7rem] uppercase font-mono text-zinc-500 mb-1">Prazo / Lembrete</label>
                                     <input type="date" name="data_limite" class="w-full text-xs px-2.5 py-2 border rounded-lg bg-slate-50 dark:bg-dark-input border-slate-300 dark:border-dark-border text-slate-800 dark:text-zinc-300">
                                 </div>
                             </div>
@@ -1078,7 +1087,7 @@ function render_task_card_html(array $task, array $projetos, array $folder_color
                     ?>
                         <a href="index.php?project_id=<?= urlencode($selected_project_id) ?>&filter=<?= urlencode($tid) ?>"
                            class="text-xs px-3 py-1.5 rounded-lg border whitespace-nowrap transition-colors <?= ($status_filter === $tid) ? 'bg-white dark:bg-zinc-800 text-slate-900 dark:text-zinc-100 border-slate-300 dark:border-zinc-700 font-medium shadow-2xs' : 'text-zinc-500 border-transparent hover:bg-slate-200/60 dark:hover:bg-zinc-900' ?>">
-                            <?= $tinfo['label'] ?> <span class="ml-1 text-[11px] opacity-70 font-mono">(<?= $tinfo['count'] ?>)</span>
+                            <?= $tinfo['label'] ?> <span class="ml-1 text-[0.75rem] opacity-70 font-mono">(<?= $tinfo['count'] ?>)</span>
                         </a>
                     <?php endforeach; ?>
                 </div>
@@ -1086,7 +1095,7 @@ function render_task_card_html(array $task, array $projetos, array $folder_color
                 <form method="GET" action="index.php" class="relative w-full sm:w-64 lg:w-72">
                     <input type="hidden" name="project_id" value="<?= h($selected_project_id) ?>">
                     <input type="hidden" name="filter" value="<?= h($status_filter) ?>">
-                    <input type="text" name="q" value="<?= h($search_query) ?>" placeholder="Buscar ideia ou palavra-chave..."
+                    <input type="text" name="q" value="<?= h($search_query) ?>" placeholder="Buscar no backlog..."
                            class="w-full text-xs pl-3 pr-7 py-1.5 border rounded-lg bg-white dark:bg-dark-input border-slate-300 dark:border-dark-border text-slate-800 dark:text-zinc-200">
                 </form>
             </div>
@@ -1097,9 +1106,9 @@ function render_task_card_html(array $task, array $projetos, array $folder_color
                     <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 items-start">
                         <?php
                         $columns = [
-                            'pendente' => ['title' => 'Pendente', 'sub' => 'Ideias e backlog para iniciar', 'dot' => 'bg-blue-500'],
-                            'em_andamento' => ['title' => 'Em Andamento', 'sub' => 'Sendo executado agora', 'dot' => 'bg-amber-500'],
-                            'concluido' => ['title' => 'Concluído', 'sub' => 'Finalizado e validado', 'dot' => 'bg-emerald-500'],
+                            'pendente' => ['title' => 'Pendente', 'sub' => 'Para iniciar', 'dot' => 'bg-blue-500'],
+                            'em_andamento' => ['title' => 'Em Andamento', 'sub' => 'Em execução', 'dot' => 'bg-amber-500'],
+                            'concluido' => ['title' => 'Concluído', 'sub' => 'Finalizado', 'dot' => 'bg-emerald-500'],
                         ];
                         foreach ($columns as $col_status => $col_meta):
                             $col_tasks = array_filter($filtered_tasks, fn($t) => ($t['status'] ?? 'pendente') === $col_status);
@@ -1112,7 +1121,7 @@ function render_task_card_html(array $task, array $projetos, array $folder_color
                                         <span class="w-2.5 h-2.5 rounded-full <?= $col_meta['dot'] ?>"></span>
                                         <div>
                                             <h3 class="text-xs font-bold text-slate-900 dark:text-zinc-100"><?= $col_meta['title'] ?></h3>
-                                            <p class="text-[10px] text-zinc-500"><?= $col_meta['sub'] ?></p>
+                                            <p class="text-[0.7rem] text-zinc-500"><?= $col_meta['sub'] ?></p>
                                         </div>
                                     </div>
                                     <span class="text-xs px-2 py-0.5 rounded-full font-mono font-semibold border bg-white dark:bg-zinc-900 border-slate-300 dark:border-zinc-800 text-slate-700 dark:text-zinc-300">
@@ -1138,7 +1147,7 @@ function render_task_card_html(array $task, array $projetos, array $folder_color
                     <div class="space-y-2.5">
                         <?php if (empty($filtered_tasks)): ?>
                             <div class="py-14 text-center border border-dashed rounded-xl border-slate-300 dark:border-dark-border">
-                                <h3 class="text-sm font-medium text-slate-600 dark:text-zinc-400">Nenhuma ideia encontrada</h3>
+                                <h3 class="text-sm font-medium text-slate-600 dark:text-zinc-400">Nenhum item encontrado</h3>
                             </div>
                         <?php else: ?>
                             <?php foreach ($filtered_tasks as $task): ?>
@@ -1151,128 +1160,120 @@ function render_task_card_html(array $task, array $projetos, array $folder_color
         </main>
     </div>
 
-    <!-- MODAL DE CONFIGURAÇÕES & SEGURANÇA -->
+    <!-- MODAL DE CONFIGURAÇÕES VISUAIS & BACKUP -->
     <div id="settings-modal" class="fixed inset-0 bg-black/70 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 z-50 <?= $sec_feedback ? '' : 'hidden' ?>">
         <div class="w-full max-w-2xl rounded-2xl border bg-[#f4f6f8] dark:bg-[#121215] border-slate-300 dark:border-zinc-800 shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
             <div class="p-4 border-b border-slate-200 dark:border-zinc-800 bg-white dark:bg-[#16161a] flex items-center justify-between">
-                <h3 class="font-semibold text-sm">Configurações da Plataforma</h3>
+                <h3 class="font-semibold text-sm">Configurações</h3>
                 <div class="flex items-center gap-1">
                     <button type="button" id="tab-btn-visual" onclick="switchSettingsTab('visual')" class="text-xs px-3 py-1.5 rounded-lg font-medium bg-blue-600 text-white cursor-pointer">Estilo & Visual</button>
-                    <button type="button" id="tab-btn-security" onclick="switchSettingsTab('security')" class="text-xs px-3 py-1.5 rounded-lg font-medium text-zinc-400 hover:text-zinc-200 cursor-pointer">Segurança & Backup</button>
-                    <button type="button" onclick="closeModal('settings-modal')" class="text-zinc-400 hover:text-zinc-200 p-1.5 ml-2">✕</button>
+                    <button type="button" id="tab-btn-security" onclick="switchSettingsTab('security')" class="text-xs px-3 py-1.5 rounded-lg font-medium text-zinc-400 hover:text-zinc-200 cursor-pointer">Backup</button>
+                    <button type="button" onclick="closeModal('settings-modal')" class="text-zinc-400 hover:text-zinc-200 p-1.5 ml-2 cursor-pointer">✕</button>
                 </div>
             </div>
 
-            <!-- ABA VISUAL -->
-            <form id="settings-tab-visual" method="POST" action="index.php" class="p-4 sm:p-6 overflow-y-auto space-y-5 text-xs <?= $sec_feedback ? 'hidden' : '' ?>">
-                <input type="hidden" name="action" value="save_settings">
-                <input type="hidden" name="csrf_token" value="<?= h($csrf_token) ?>">
-                <input type="hidden" name="current_project" value="<?= h($selected_project_id) ?>">
-                <input type="hidden" name="current_filter" value="<?= h($status_filter) ?>">
-
+            <!-- ABA VISUAL (REATIVA COM PERSISTÊNCIA EM LOCALSTORAGE E COOKIES) -->
+            <div id="settings-tab-visual" class="p-4 sm:p-6 overflow-y-auto space-y-5 text-xs <?= $sec_feedback ? 'hidden' : '' ?>">
                 <div>
-                    <label class="font-semibold uppercase tracking-wider text-zinc-500 text-[11px] block mb-2">Tema da Interface</label>
+                    <label class="font-semibold uppercase tracking-wider text-zinc-500 text-[0.75rem] block mb-2">Tema da Interface</label>
                     <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                        <label class="p-3 rounded-xl border flex items-center gap-3 cursor-pointer <?= ($theme === 'dark') ? 'border-blue-500 bg-blue-500/10' : 'border-zinc-700' ?>">
-                            <input type="radio" name="theme" value="dark" <?= ($theme === 'dark') ? 'checked' : '' ?>>
+                        <button type="button"
+                                id="theme-card-dark"
+                                onclick="setAppTheme('dark')"
+                                class="p-3 rounded-xl border flex items-center gap-3 cursor-pointer text-left transition-all <?= ($theme === 'dark') ? 'border-blue-500 bg-blue-500/10 ring-2 ring-blue-500/20 font-semibold' : 'border-slate-300 dark:border-zinc-800 bg-white dark:bg-[#18181c]' ?>">
                             <div>
-                                <div class="font-medium text-xs">Tema Black</div>
-                                <div class="text-[10px] text-zinc-500">Noturno chumbo sóbrio</div>
+                                <div class="font-medium text-xs">Modo Black</div>
+                                <div class="text-[0.7rem] text-zinc-500">Noturno chumbo sóbrio</div>
                             </div>
-                        </label>
-                        <label class="p-3 rounded-xl border flex items-center gap-3 cursor-pointer <?= ($theme === 'light') ? 'border-blue-600 bg-blue-50' : 'border-slate-300' ?>">
-                            <input type="radio" name="theme" value="light" <?= ($theme === 'light') ? 'checked' : '' ?>>
+                        </button>
+                        <button type="button"
+                                id="theme-card-light"
+                                onclick="setAppTheme('light')"
+                                class="p-3 rounded-xl border flex items-center gap-3 cursor-pointer text-left transition-all <?= ($theme === 'light') ? 'border-blue-600 bg-blue-50 ring-2 ring-blue-600/20 font-semibold' : 'border-slate-300 dark:border-zinc-800 bg-white dark:bg-[#18181c]' ?>">
                             <div>
-                                <div class="font-medium text-xs">Tema White Suave</div>
-                                <div class="text-[10px] text-zinc-500">Fosco e relaxante aos olhos</div>
+                                <div class="font-medium text-xs">Modo White</div>
+                                <div class="text-[0.7rem] text-zinc-500">Fosco e confortável aos olhos</div>
                             </div>
-                        </label>
+                        </button>
                     </div>
                 </div>
 
                 <div>
-                    <label class="font-semibold uppercase tracking-wider text-zinc-500 text-[11px] block mb-2">Estilo de Fonte</label>
+                    <label class="font-semibold uppercase tracking-wider text-zinc-500 text-[0.75rem] block mb-2">Família Tipográfica</label>
                     <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                         <?php
                         $font_options = [
-                            'Helvetica / Arial' => 'Clássica e neutra',
-                            'Montserrat' => 'Moderna e geométrica',
-                            'Roboto' => 'Equilibrada e legível',
-                            'Open Sans / Lato' => 'Humanista suave'
+                            'Helvetica / Arial' => ['desc' => 'Clássica e neutra de sistema', 'css' => '"Helvetica Neue", Helvetica, Arial, sans-serif'],
+                            'Montserrat' => ['desc' => 'Moderna e geométrica', 'css' => '"Montserrat", "Helvetica Neue", Helvetica, Arial, sans-serif'],
+                            'Roboto' => ['desc' => 'Equilibrada e legível', 'css' => '"Roboto", "Helvetica Neue", Helvetica, Arial, sans-serif'],
+                            'Open Sans / Lato' => ['desc' => 'Humanista suave', 'css' => '"Open Sans", "Lato", "Helvetica Neue", Helvetica, Arial, sans-serif']
                         ];
-                        foreach ($font_options as $fid => $fdesc):
+                        foreach ($font_options as $fid => $fmeta):
                         ?>
-                            <label class="p-3 rounded-xl border cursor-pointer <?= ($font_family === $fid) ? 'border-blue-500 bg-blue-500/10' : 'border-slate-300 dark:border-zinc-800' ?>">
-                                <input type="radio" name="font_family" value="<?= h($fid) ?>" <?= ($font_family === $fid) ? 'checked' : '' ?>>
-                                <span class="font-semibold text-xs ml-1"><?= h($fid) ?></span>
-                                <div class="text-[10px] text-zinc-500 mt-0.5"><?= h($fdesc) ?></div>
-                            </label>
+                            <button type="button"
+                                    data-font-id="<?= h($fid) ?>"
+                                    onclick="setAppFontFamily('<?= h($fid) ?>')"
+                                    style="font-family: <?= h($fmeta['css']) ?> !important;"
+                                    class="font-option-btn p-3 rounded-xl border text-left cursor-pointer transition-all <?= ($font_family === $fid) ? 'border-blue-500 bg-blue-500/10 ring-2 ring-blue-500/20 font-semibold' : 'border-slate-300 dark:border-zinc-800 bg-white dark:bg-[#18181c]' ?>">
+                                <div class="font-semibold text-xs"><?= h($fid) ?></div>
+                                <div class="text-[0.7rem] text-zinc-500 mt-0.5"><?= h($fmeta['desc']) ?></div>
+                            </button>
                         <?php endforeach; ?>
                     </div>
                 </div>
 
                 <div>
-                    <label class="font-semibold uppercase tracking-wider text-zinc-500 text-[11px] block mb-2">Tamanho da Letra</label>
+                    <label class="font-semibold uppercase tracking-wider text-zinc-500 text-[0.75rem] block mb-2">Escala Tipográfica</label>
                     <div class="grid grid-cols-3 gap-2.5">
-                        <?php foreach (['small' => 'Pequena (13px)', 'medium' => 'Média (15px)', 'large' => 'Grande (17px)'] as $sid => $slabel): ?>
-                            <label class="p-3 rounded-xl border text-center cursor-pointer <?= ($font_size === $sid) ? 'border-blue-500 bg-blue-500/10' : 'border-slate-300 dark:border-zinc-800' ?>">
-                                <input type="radio" name="font_size" value="<?= $sid ?>" <?= ($font_size === $sid) ? 'checked' : '' ?>>
-                                <div class="font-semibold text-xs mt-1"><?= $slabel ?></div>
-                            </label>
+                        <?php foreach (['small' => ['label' => 'Pequena', 'px' => '13px'], 'medium' => ['label' => 'Média', 'px' => '15px'], 'large' => ['label' => 'Grande', 'px' => '17px']] as $sid => $smeta): ?>
+                            <button type="button"
+                                    data-size-id="<?= $sid ?>"
+                                    onclick="setAppFontSize('<?= $sid ?>')"
+                                    class="size-option-btn p-3 rounded-xl border text-center cursor-pointer transition-all <?= ($font_size === $sid) ? 'border-blue-500 bg-blue-500/10 ring-2 ring-blue-500/20 font-semibold' : 'border-slate-300 dark:border-zinc-800 bg-white dark:bg-[#18181c]' ?>">
+                                <div class="font-semibold text-xs"><?= $smeta['label'] ?></div>
+                                <div class="text-[0.7rem] text-zinc-500 font-mono mt-0.5"><?= $smeta['px'] ?></div>
+                            </button>
                         <?php endforeach; ?>
                     </div>
                 </div>
 
-                <div class="pt-3 border-t border-slate-200 dark:border-dark-border flex justify-end">
-                    <button type="submit" class="text-xs px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg font-medium cursor-pointer">
-                        Salvar Estilo Visual
+                <div class="p-4 rounded-xl border bg-white dark:bg-[#18181c] border-slate-200 dark:border-zinc-800">
+                    <div class="flex items-center justify-between mb-2">
+                        <span class="text-[0.75rem] font-semibold uppercase tracking-wider text-zinc-500">Pré-visualização em Tempo Real</span>
+                        <span id="live-preview-badge" class="text-[0.7rem] px-2 py-0.5 rounded font-mono border bg-blue-500/10 text-blue-500 border-blue-500/20">
+                            <?= h($font_family) ?> • <?= h($font_size_px) ?> • <?= $theme === 'dark' ? 'Black' : 'White' ?>
+                        </span>
+                    </div>
+                    <div class="p-3.5 rounded-xl border bg-[#f4f6f8] dark:bg-[#101012] border-slate-300 dark:border-zinc-800">
+                        <span class="font-semibold text-xs block mb-1">Backlog</span>
+                        <p class="text-xs text-zinc-500 dark:text-zinc-400 leading-relaxed">
+                            Este texto reflete instantaneamente a família tipográfica, a escala de tamanho (13px, 15px ou 17px) e o tema selecionados.
+                        </p>
+                    </div>
+                </div>
+
+                <div class="pt-3 border-t border-slate-200 dark:border-dark-border flex items-center justify-between">
+                    <span class="text-[0.75rem] text-zinc-500">Preferências aplicadas e salvas automaticamente no navegador.</span>
+                    <button type="button" onclick="closeModal('settings-modal')" class="text-xs px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg font-medium cursor-pointer">
+                        Fechar
                     </button>
                 </div>
-            </form>
+            </div>
 
-            <!-- ABA SEGURANÇA, .ENV & SUPABASE -->
-            <div id="settings-tab-security" class="p-4 sm:p-6 overflow-y-auto space-y-6 text-xs <?= $sec_feedback ? '' : 'hidden' ?>">
+            <!-- ABA BACKUP -->
+            <div id="settings-tab-security" class="p-4 sm:p-6 overflow-y-auto space-y-5 text-xs <?= $sec_feedback ? '' : 'hidden' ?>">
                 <?php if ($sec_feedback): ?>
                     <div class="p-3 rounded-xl border <?= $sec_feedback['type'] === 'ok' ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-500' : 'bg-rose-500/10 border-rose-500/30 text-rose-500' ?>">
                         <?= h($sec_feedback['text']) ?>
                     </div>
                 <?php endif; ?>
 
-                <div class="p-4 rounded-xl border border-blue-500/30 bg-blue-500/5 space-y-1.5">
-                    <div class="font-semibold text-xs text-blue-500">Proteção de Credenciais (.env + .gitignore + .htaccess)</div>
-                    <p class="text-[11px] text-zinc-500 leading-relaxed">
-                        Seu E-mail (<code class="font-mono">ADMIN_EMAIL</code>) e Senha (<code class="font-mono">ADMIN_PASSWORD</code>) ficam isolados no arquivo <code class="font-mono">.env</code> na raiz do projeto, protegido pelo <code class="font-mono">.htaccess</code> contra acesso externo e listado no <code class="font-mono">.gitignore</code> para jamais ser exposto em repositórios Git.
-                    </p>
-                </div>
-
                 <div class="p-4 rounded-xl border border-slate-200 dark:border-zinc-800 bg-white dark:bg-[#18181c] space-y-3">
-                    <div class="flex items-center justify-between">
-                        <h4 class="font-semibold text-xs">Banco de Dados na Nuvem — Supabase</h4>
-                        <span class="text-[10px] px-2 py-0.5 rounded-full font-mono border <?= $supabase_active ? 'bg-emerald-500/10 text-emerald-500 border-emerald-500/30' : 'bg-amber-500/10 text-amber-500 border-amber-500/30' ?>">
-                            <?= $supabase_active ? 'Supabase Conectado' : 'Aguardando chaves no .env' ?>
-                        </span>
-                    </div>
-                    <ol class="list-decimal list-inside space-y-1 text-[11px] text-zinc-500">
-                        <li>Execute o script <code class="font-mono text-blue-500">supabase_schema.sql</code> no <strong>SQL Editor</strong> do seu projeto no Supabase.</li>
-                        <li>Preencha <code class="font-mono">SUPABASE_URL</code> e <code class="font-mono">SUPABASE_KEY</code> no seu arquivo <code class="font-mono">.env</code>.</li>
-                        <li>Clique no botão abaixo para sincronizar todas as suas pastas e ideias com o Supabase.</li>
-                    </ol>
-                    <form method="POST" action="index.php">
-                        <input type="hidden" name="action" value="sync_supabase">
-                        <input type="hidden" name="csrf_token" value="<?= h($csrf_token) ?>">
-                        <input type="hidden" name="current_project" value="<?= h($selected_project_id) ?>">
-                        <input type="hidden" name="current_filter" value="<?= h($status_filter) ?>">
-                        <button type="submit" class="px-3.5 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-medium cursor-pointer">
-                            Sincronizar Dados com o Supabase Agora
-                        </button>
-                    </form>
-                </div>
-
-                <div class="pt-4 border-t border-slate-200 dark:border-zinc-800 space-y-3">
-                    <h4 class="font-semibold text-xs">Backup Local e Restauração (JSON)</h4>
-                    <div class="flex flex-wrap items-center gap-3">
+                    <h4 class="font-semibold text-xs">Backup e Restauração (JSON)</h4>
+                    <p class="text-[0.75rem] text-zinc-500">Exporte ou restaure uma cópia de segurança das suas pastas e itens do backlog.</p>
+                    <div class="flex flex-wrap items-center gap-3 pt-1">
                         <a href="api.php?action=export_backup" class="px-3.5 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-medium inline-flex items-center gap-1.5">
-                            Exportar Backup Agora (.json)
+                            Exportar Backup (.json)
                         </a>
 
                         <form method="POST" action="index.php" enctype="multipart/form-data" class="inline">
@@ -1338,7 +1339,7 @@ function render_task_card_html(array $task, array $projetos, array $folder_color
     <div id="modal-edit-task" class="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 hidden">
         <div class="w-full max-w-lg rounded-2xl border bg-white dark:bg-dark-panel border-light-border dark:border-dark-border p-5 shadow-2xl">
             <div class="flex items-center justify-between pb-3 border-b border-slate-200 dark:border-dark-borderSubtle mb-4">
-                <h3 class="font-semibold text-sm">Editar Ideia</h3>
+                <h3 class="font-semibold text-sm">Editar Item</h3>
                 <button onclick="closeModal('modal-edit-task')" class="text-zinc-400">✕</button>
             </div>
 
@@ -1420,10 +1421,121 @@ function render_task_card_html(array $task, array $projetos, array $folder_color
             <img id="lightbox-img" src="" alt="Imagem ampliada" class="max-h-[85vh] max-w-full rounded-xl border border-zinc-800 object-contain shadow-2xl">
         </div>
     </div>
+<?php endif; ?>
 
     <script>
         const CSRF_TOKEN = <?= json_encode($csrf_token) ?>;
         let draggedTaskId = null;
+
+        const FONT_MAP = {
+            'Helvetica / Arial': '"Helvetica Neue", Helvetica, Arial, sans-serif',
+            'Montserrat': '"Montserrat", "Helvetica Neue", Helvetica, Arial, sans-serif',
+            'Roboto': '"Roboto", "Helvetica Neue", Helvetica, Arial, sans-serif',
+            'Open Sans / Lato': '"Open Sans", "Lato", "Helvetica Neue", Helvetica, Arial, sans-serif'
+        };
+
+        const SIZE_MAP = {
+            small: '13px',
+            medium: '15px',
+            large: '17px'
+        };
+
+        let currentTheme = localStorage.getItem('app_theme') || <?= json_encode($theme) ?>;
+        if (currentTheme !== 'dark' && currentTheme !== 'light') currentTheme = 'dark';
+
+        let currentFontFamily = localStorage.getItem('app_font_family') || <?= json_encode($font_family) ?>;
+        if (!FONT_MAP[currentFontFamily]) currentFontFamily = 'Roboto';
+
+        let currentFontSize = localStorage.getItem('app_font_size') || <?= json_encode($font_size) ?>;
+        if (!SIZE_MAP[currentFontSize]) currentFontSize = 'medium';
+
+        function applyVisualPreferences() {
+            const root = document.documentElement;
+            const body = document.body;
+            const familyCss = FONT_MAP[currentFontFamily] || FONT_MAP['Roboto'];
+            const sizePx = SIZE_MAP[currentFontSize] || '15px';
+
+            root.classList.remove('dark', 'light');
+            root.classList.add(currentTheme);
+            root.setAttribute('data-theme', currentTheme);
+            root.style.colorScheme = currentTheme;
+            root.style.fontSize = sizePx;
+            root.style.fontFamily = familyCss;
+            root.style.setProperty('--app-font-size', sizePx);
+            root.style.setProperty('--app-font-family', familyCss);
+
+            if (body) {
+                body.classList.remove('dark', 'light');
+                body.classList.add(currentTheme);
+                body.setAttribute('data-theme', currentTheme);
+                body.style.fontFamily = familyCss;
+            }
+
+            try {
+                localStorage.setItem('app_theme', currentTheme);
+                localStorage.setItem('app_font_family', currentFontFamily);
+                localStorage.setItem('app_font_size', currentFontSize);
+            } catch (e) {}
+
+            document.cookie = 'app_theme=' + currentTheme + ';path=/;max-age=31536000;SameSite=Lax';
+            document.cookie = 'app_font_family=' + encodeURIComponent(currentFontFamily) + ';path=/;max-age=31536000;SameSite=Lax';
+            document.cookie = 'app_font_size=' + currentFontSize + ';path=/;max-age=31536000;SameSite=Lax';
+
+            updateVisualModalSelection(sizePx);
+        }
+
+        function updateVisualModalSelection(sizePx) {
+            const darkCard = document.getElementById('theme-card-dark');
+            const lightCard = document.getElementById('theme-card-light');
+            const activeCls = 'border-blue-500 bg-blue-500/10 ring-2 ring-blue-500/20 font-semibold';
+            const inactiveCls = 'border-slate-300 dark:border-zinc-800 bg-white dark:bg-[#18181c]';
+
+            if (darkCard && lightCard) {
+                darkCard.className = 'p-3 rounded-xl border flex items-center gap-3 cursor-pointer text-left transition-all ' + (currentTheme === 'dark' ? activeCls : inactiveCls);
+                lightCard.className = 'p-3 rounded-xl border flex items-center gap-3 cursor-pointer text-left transition-all ' + (currentTheme === 'light' ? activeCls : inactiveCls);
+            }
+
+            document.querySelectorAll('.font-option-btn').forEach(btn => {
+                const fid = btn.getAttribute('data-font-id');
+                btn.className = 'font-option-btn p-3 rounded-xl border text-left cursor-pointer transition-all ' + (fid === currentFontFamily ? activeCls : inactiveCls);
+            });
+
+            document.querySelectorAll('.size-option-btn').forEach(btn => {
+                const sid = btn.getAttribute('data-size-id');
+                btn.className = 'size-option-btn p-3 rounded-xl border text-center cursor-pointer transition-all ' + (sid === currentFontSize ? activeCls : inactiveCls);
+            });
+
+            const badge = document.getElementById('live-preview-badge');
+            if (badge) {
+                badge.textContent = currentFontFamily + ' • ' + sizePx + ' • ' + (currentTheme === 'dark' ? 'Black' : 'White');
+            }
+        }
+
+        function setAppTheme(theme) {
+            currentTheme = theme === 'light' ? 'light' : 'dark';
+            applyVisualPreferences();
+        }
+
+        function toggleQuickTheme() {
+            setAppTheme(currentTheme === 'dark' ? 'light' : 'dark');
+        }
+
+        function setAppFontFamily(family) {
+            if (FONT_MAP[family]) {
+                currentFontFamily = family;
+                applyVisualPreferences();
+            }
+        }
+
+        function setAppFontSize(size) {
+            if (SIZE_MAP[size]) {
+                currentFontSize = size;
+                applyVisualPreferences();
+            }
+        }
+
+        // Inicializa preferências imediatamente ao carregar
+        applyVisualPreferences();
 
         function openModal(id) {
             const el = document.getElementById(id);
@@ -1439,6 +1551,7 @@ function render_task_card_html(array $task, array $projetos, array $folder_color
             const sTab = document.getElementById('settings-tab-security');
             const vBtn = document.getElementById('tab-btn-visual');
             const sBtn = document.getElementById('tab-btn-security');
+            if (!vTab || !sTab) return;
             if (tab === 'security') {
                 vTab.classList.add('hidden');
                 sTab.classList.remove('hidden');
@@ -1499,7 +1612,6 @@ function render_task_card_html(array $task, array $projetos, array $folder_color
             openModal('lightbox-modal');
         }
 
-        // Drag & Drop Kanban + Transição Rápida via API Unificada
         function handleDragStart(e, taskId) {
             draggedTaskId = taskId;
             e.currentTarget.style.opacity = '0.5';
@@ -1538,6 +1650,5 @@ function render_task_card_html(array $task, array $projetos, array $folder_color
             }
         }
     </script>
-<?php endif; ?>
 </body>
 </html>

@@ -1,21 +1,50 @@
 <!doctype html>
-<html lang="en">
+<html lang="pt-BR" class="dark" data-theme="dark">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Backlog & Ideias - Gestor PHP Puro</title>
-    <meta name="description" content="Aplicação web completa em PHP puro para gerenciamento de ideias e backlog organizados por projetos, com persistência JSON e interface dark mode profissional." />
-    <meta property="og:title" content="Backlog & Ideias - Gestor PHP Puro" />
-    <meta property="og:description" content="Aplicação web completa em PHP puro para gerenciamento de ideias e backlog organizados por projetos, com persistência JSON e interface dark mode profissional." />
+    <title>Backlog</title>
+    <meta name="description" content="Backlog — Gerenciamento de projetos e ideias." />
+    <meta property="og:title" content="Backlog" />
+    <meta property="og:description" content="Backlog — Gerenciamento de projetos e ideias." />
     <meta property="og:type" content="website" />
     <meta name="twitter:card" content="summary_large_image" />
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Lato:ital,wght@0,400;0,700;1,400&family=Montserrat:ital,wght@0,400;0,500;0,600;0,700;1,400&family=Open+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&family=Roboto:ital,wght@0,400;0,500;0,700;1,400&display=swap" rel="stylesheet">
+    <script>
+      (function () {
+        try {
+          var theme = localStorage.getItem('app_theme') || 'dark';
+          if (theme !== 'dark' && theme !== 'light') theme = 'dark';
+          var root = document.documentElement;
+          root.classList.remove('dark', 'light');
+          root.classList.add(theme);
+          root.setAttribute('data-theme', theme);
+          root.style.colorScheme = theme;
+
+          var size = localStorage.getItem('app_font_size') || 'medium';
+          var sizeMap = { small: '13px', medium: '15px', large: '17px' };
+          var sizePx = sizeMap[size] || '15px';
+          root.style.fontSize = sizePx;
+          root.style.setProperty('--app-font-size', sizePx);
+
+          var family = localStorage.getItem('app_font_family') || 'Roboto';
+          var familyMap = {
+            'Helvetica / Arial': '"Helvetica Neue", Helvetica, Arial, sans-serif',
+            'Montserrat': '"Montserrat", "Helvetica Neue", Helvetica, Arial, sans-serif',
+            'Roboto': '"Roboto", "Helvetica Neue", Helvetica, Arial, sans-serif',
+            'Open Sans / Lato': '"Open Sans", "Lato", "Helvetica Neue", Helvetica, Arial, sans-serif'
+          };
+          var familyCss = familyMap[family] || familyMap['Roboto'];
+          root.style.setProperty('--app-font-family', familyCss);
+          root.style.fontFamily = familyCss;
+        } catch (e) {}
+      })();
+    </script>
   </head>
-  <body>
+  <body class="antialiased">
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
-
