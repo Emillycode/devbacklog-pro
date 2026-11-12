@@ -52,6 +52,16 @@ import {
   getFontSizePx,
   formatDateTime
 } from './utils/backlog-logic.ts';
+import {
+  getSupabaseClient,
+  initSupabaseClient,
+  isSupabaseClientConfigured
+} from './lib/supabase.ts';
+import {
+  useAppRouter,
+  ProtectedRoute
+} from './components/ProtectedRoute.tsx';
+import { AuthScreen } from './components/AuthScreen.tsx';
 
 const FOLDER_COLOR_MAP: Record<FolderColor, { dot: string; badgeDark: string; badgeLight: string }> = {
   blue: {
@@ -200,13 +210,18 @@ export default function App() {
     return 'kanban';
   });
 
-  // Backend & Auth States
+  const { route, navigate } = useAppRouter();
+
+  // Backend & Supabase Auth States
   const [backendConnected, setBackendConnected] = useState<boolean>(false);
-  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(true);
+  const [supabaseEnabled, setSupabaseEnabled] = useState<boolean>(() =>
+    isSupabaseClientConfigured()
+  );
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
+  const [currentUserId, setCurrentUserId] = useState<string>('');
+  const [currentUserEmail, setCurrentUserEmail] = useState<string>('');
+  const [supabaseAccessToken, setSupabaseAccessToken] = useState<string>('');
   const [csrfToken, setCsrfToken] = useState<string>('');
-  const [loginEmail, setLoginEmail] = useState<string>('');
-  const [loginInput, setLoginInput] = useState<string>('');
-  const [loginError, setLoginError] = useState<string>('');
   const [isLoadingAuth, setIsLoadingAuth] = useState<boolean>(true);
 
   // Settings Modal States
@@ -274,6 +289,15 @@ export default function App() {
   const [editTaskRemoveMedia, setEditTaskRemoveMedia] = useState<boolean>(false);
   const editFileInputRef = useRef<HTMLInputElement>(null);
   const backupInputRef = useRef<HTMLInputElement>(null);
+
+  // Synchronize URL route (/kanban or /lista) with viewMode
+  useEffect(() => {
+    if (route === '/lista' && viewMode !== 'list') {
+      setViewMode('list');
+    } else if (route === '/kanban' && viewMode !== 'kanban') {
+      setViewMode('kanban');
+    }
+  }, [route, viewMode]);
 
   // Set official application title strictly as "Backlog"
   useEffect(() => {
@@ -377,37 +401,170 @@ export default function App() {
     }
   }, [tarefas]);
 
-  // Fetch initial state from PHP Backend (api.php)
-  const fetchBackendState = useCallback(async () => {
+  const getAuthHeaders = useCallback(
+    (extra: Record<string, string> = {}): Record<string, string> => {
+      const headers: Record<string, string> = { ...extra };
+      if (csrfToken) {
+        headers['X-CSRF-Token'] = csrfToken;
+      }
+      if (supabaseAccessToken) {
+        headers['Authorization'] = `Bearer ${supabaseAccessToken}`;
+      }
+      return headers;
+    },
+    [csrfToken, supabaseAccessToken]
+  );
+
+  // Carrega dados diretamente do Supabase (protegidos por RLS por user_id)
+  const loadFromSupabaseDirect = useCallback(async () => {
+    const sb = getSupabaseClient();
+    if (!sb) return;
+    try {
+      const [{ data: projData, error: projErr }, { data: taskData, error: taskErr }] =
+        await Promise.all([
+          sb.from('projetos').select('*').order('criado_em', { ascending: true }),
+          sb.from('tarefas').select('*').order('criado_em', { ascending: false })
+        ]);
+
+      if (!projErr && Array.isArray(projData)) {
+        setProjetos(
+          projData.map((p: any) => ({
+            id: p.id,
+            nome: p.nome,
+            descricao: p.descricao || '',
+            cor: p.cor || 'blue',
+            criado_em: p.criado_em
+              ? String(p.criado_em).replace('T', ' ').substring(0, 19)
+              : ''
+          }))
+        );
+      }
+      if (!taskErr && Array.isArray(taskData)) {
+        setTarefas(
+          taskData.map((t: any) => ({
+            id: t.id,
+            id_projeto: t.id_projeto,
+            titulo: t.titulo,
+            descricao_detalhada: t.descricao_detalhada || '',
+            prioridade: t.prioridade || 'Média',
+            status: t.status || 'pendente',
+            data_limite: t.data_limite || '',
+            criado_em: t.criado_em
+              ? String(t.criado_em).replace('T', ' ').substring(0, 19)
+              : '',
+            anexo: typeof t.anexo === 'string' ? JSON.parse(t.anexo) : t.anexo || null
+          }))
+        );
+      }
+    } catch {
+      // fallback to local state
+    }
+  }, []);
+
+  // Inicialização unificada: Backend PHP + Supabase Auth Session
+  const initializeAuthAndState = useCallback(async () => {
     setIsLoadingAuth(true);
+    let sb = getSupabaseClient();
+    let phpAvailable = false;
+    let phpData: any = null;
+
     try {
       const res = await fetch('./api.php?action=state', {
         credentials: 'same-origin'
       });
-      if (!res.ok) throw new Error('Backend unavailable');
-      const data = await res.json();
-      setBackendConnected(true);
-      if (data.csrf_token) setCsrfToken(data.csrf_token);
-
-      if (data.authenticated === false) {
-        setIsAuthenticated(false);
+      if (res.ok) {
+        phpData = await res.json();
+        phpAvailable = true;
+        setBackendConnected(true);
+        if (phpData.csrf_token) setCsrfToken(phpData.csrf_token);
+        if (!sb && phpData.supabase_url && phpData.supabase_publishable_key) {
+          sb = initSupabaseClient(phpData.supabase_url, phpData.supabase_publishable_key);
+        }
       } else {
-        setIsAuthenticated(true);
-        if (Array.isArray(data.projetos)) setProjetos(data.projetos);
-        if (Array.isArray(data.tarefas)) setTarefas(data.tarefas);
+        setBackendConnected(false);
       }
     } catch {
       setBackendConnected(false);
+    }
+
+    if (sb) {
+      setSupabaseEnabled(true);
+      const {
+        data: { session }
+      } = await sb.auth.getSession();
+
+      if (session?.user) {
+        setIsAuthenticated(true);
+        setCurrentUserId(session.user.id);
+        setCurrentUserEmail(session.user.email || '');
+        setSupabaseAccessToken(session.access_token);
+        await loadFromSupabaseDirect();
+      } else {
+        setIsAuthenticated(false);
+        setCurrentUserId('');
+        setCurrentUserEmail('');
+        setSupabaseAccessToken('');
+      }
+      setIsLoadingAuth(false);
+      return;
+    }
+
+    setSupabaseEnabled(false);
+    if (phpAvailable && phpData) {
+      if (phpData.authenticated === false) {
+        setIsAuthenticated(false);
+      } else {
+        setIsAuthenticated(true);
+        setCurrentUserEmail(phpData.admin_email || '');
+        if (Array.isArray(phpData.projetos)) setProjetos(phpData.projetos);
+        if (Array.isArray(phpData.tarefas)) setTarefas(phpData.tarefas);
+      }
+    } else {
       const localLocked = sessionStorage.getItem('app_local_locked') === '1';
       setIsAuthenticated(!localLocked);
-    } finally {
-      setIsLoadingAuth(false);
+      if (!localLocked) {
+        setCurrentUserEmail(
+          localStorage.getItem('app_local_email') || 'admin@meusoftware.com'
+        );
+      }
     }
-  }, []);
+    setIsLoadingAuth(false);
+  }, [loadFromSupabaseDirect]);
 
   useEffect(() => {
-    fetchBackendState();
-  }, [fetchBackendState]);
+    initializeAuthAndState();
+  }, [initializeAuthAndState]);
+
+  // Listener em tempo real do Supabase Auth (login, logout, refresh token, recovery)
+  useEffect(() => {
+    const sb = getSupabaseClient();
+    if (!sb) return;
+
+    const {
+      data: { subscription }
+    } = sb.auth.onAuthStateChange((event, session) => {
+      if (event === 'PASSWORD_RECOVERY') {
+        navigate('/reset-password');
+      }
+
+      if (session?.user) {
+        setIsAuthenticated(true);
+        setCurrentUserId(session.user.id);
+        setCurrentUserEmail(session.user.email || '');
+        setSupabaseAccessToken(session.access_token);
+        loadFromSupabaseDirect();
+      } else {
+        setIsAuthenticated(false);
+        setCurrentUserId('');
+        setCurrentUserEmail('');
+        setSupabaseAccessToken('');
+      }
+    });
+
+    return () => {
+      subscription.unsubscribe();
+    };
+  }, [supabaseEnabled, navigate, loadFromSupabaseDirect]);
 
   const currentProject = useMemo(() => {
     if (selectedProjectId === 'all') return null;
@@ -452,11 +609,38 @@ export default function App() {
     }));
   };
 
-  // Authentication Handlers
-  const handleLogin = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setLoginError('');
-    if (!loginEmail.trim() || !loginInput.trim()) return;
+  // Authentication Handlers (Supabase Auth + Fallback PHP/Local)
+  const handleAuthLogin = async (
+    email: string,
+    password: string
+  ): Promise<{ ok: boolean; error?: string }> => {
+    const adminEmail = 'lima7emilly12@gmail.com';
+    if (email.trim().toLowerCase() !== adminEmail.toLowerCase()) {
+      return {
+        ok: false,
+        error: 'Acesso negado: Plataforma de uso exclusivo do administrador.'
+      };
+    }
+
+    const sb = getSupabaseClient();
+    if (sb) {
+      const { data, error } = await sb.auth.signInWithPassword({ email, password });
+      if (error || !data.session) {
+        return {
+          ok: false,
+          error:
+            error?.message === 'Invalid login credentials'
+              ? 'E-mail ou senha inválidos.'
+              : error?.message || 'Não foi possível autenticar no Supabase.'
+        };
+      }
+      setIsAuthenticated(true);
+      setCurrentUserId(data.user.id);
+      setCurrentUserEmail(data.user.email || email);
+      setSupabaseAccessToken(data.session.access_token);
+      await loadFromSupabaseDirect();
+      return { ok: true };
+    }
 
     if (backendConnected) {
       try {
@@ -464,45 +648,83 @@ export default function App() {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           credentials: 'same-origin',
-          body: JSON.stringify({
-            email: loginEmail.trim(),
-            password: loginInput
-          })
+          body: JSON.stringify({ email, password })
         });
         const data = await res.json();
         if (!res.ok || !data.ok) {
-          setLoginError(data.error || 'E-mail ou senha inválidos.');
-          return;
+          return { ok: false, error: data.error || 'E-mail ou senha inválidos.' };
         }
         if (data.csrf_token) setCsrfToken(data.csrf_token);
         if (Array.isArray(data.projetos)) setProjetos(data.projetos);
         if (Array.isArray(data.tarefas)) setTarefas(data.tarefas);
+        setCurrentUserEmail(data.admin_email || email);
         setIsAuthenticated(true);
-        setLoginInput('');
+        return { ok: true };
       } catch {
-        setLoginError('Erro de conexão com o servidor.');
-      }
-    } else {
-      const savedEmail = localStorage.getItem('app_local_email') || 'admin@meusoftware.com';
-      const savedPass = localStorage.getItem('app_local_pass') || 'admin123';
-      if (
-        loginEmail.trim().toLowerCase() === savedEmail.toLowerCase() &&
-        loginInput === savedPass
-      ) {
-        sessionStorage.removeItem('app_local_locked');
-        setIsAuthenticated(true);
-        setLoginInput('');
-      } else {
-        setLoginError('E-mail ou senha inválidos.');
+        return { ok: false, error: 'Erro de conexão com o servidor.' };
       }
     }
+
+    const savedEmail = localStorage.getItem('app_local_email') || 'lima7emilly12@gmail.com';
+    const savedPass = localStorage.getItem('app_local_pass') || '14021976Ee@';
+    if (email.toLowerCase() === savedEmail.toLowerCase() && password === savedPass) {
+      sessionStorage.removeItem('app_local_locked');
+      setCurrentUserEmail(email);
+      setIsAuthenticated(true);
+      return { ok: true };
+    }
+    return { ok: false, error: 'E-mail ou senha inválidos.' };
+  };
+
+  const handleAuthForgotPassword = async (
+    email: string
+  ): Promise<{ ok: boolean; error?: string; message?: string }> => {
+    const sb = getSupabaseClient();
+    if (!sb) {
+      return {
+        ok: false,
+        error: 'Configure o Supabase no arquivo .env para usar a recuperação de senha por e-mail.'
+      };
+    }
+
+    const basePrefix = window.location.pathname.match(/^(\/novoapp)(?:\/.*)?$/i)?.[1] || '';
+    const redirectTo = `${window.location.origin}${basePrefix}/reset-password`;
+
+    const { error } = await sb.auth.resetPasswordForEmail(email, { redirectTo });
+    if (error) {
+      return { ok: false, error: error.message };
+    }
+    return {
+      ok: true,
+      message: 'Enviamos um link de redefinição de senha para o seu e-mail.'
+    };
+  };
+
+  const handleAuthResetPassword = async (
+    newPassword: string
+  ): Promise<{ ok: boolean; error?: string; message?: string }> => {
+    const sb = getSupabaseClient();
+    if (!sb) {
+      return { ok: false, error: 'Cliente Supabase não configurado.' };
+    }
+
+    const { error } = await sb.auth.updateUser({ password: newPassword });
+    if (error) {
+      return { ok: false, error: error.message };
+    }
+    return { ok: true, message: 'Sua senha foi atualizada com sucesso!' };
   };
 
   const handleLockScreen = async () => {
+    const sb = getSupabaseClient();
+    if (sb) {
+      await sb.auth.signOut();
+    }
     if (backendConnected) {
       try {
         const res = await fetch('./api.php?action=logout', {
           method: 'POST',
+          headers: getAuthHeaders(),
           credentials: 'same-origin'
         });
         const data = await res.json();
@@ -514,7 +736,10 @@ export default function App() {
       sessionStorage.setItem('app_local_locked', '1');
     }
     setIsAuthenticated(false);
-    setLoginInput('');
+    setCurrentUserId('');
+    setCurrentUserEmail('');
+    setSupabaseAccessToken('');
+    navigate('/login', true);
   };
 
   // Project Handlers
@@ -522,14 +747,33 @@ export default function App() {
     e.preventDefault();
     if (!newProjectNome.trim()) return;
 
-    if (backendConnected) {
+    const sb = getSupabaseClient();
+    if (sb && currentUserId && !backendConnected) {
+      const newId = `proj_${Date.now()}`;
+      const nowStr = new Date().toISOString().replace('T', ' ').substring(0, 19);
+      const newProj: Projeto = {
+        id: newId,
+        nome: newProjectNome.trim(),
+        descricao: newProjectDesc.trim(),
+        cor: newProjectCor,
+        criado_em: nowStr
+      };
+      const { error } = await sb.from('projetos').insert({
+        id: newId,
+        user_id: currentUserId,
+        nome: newProj.nome,
+        descricao: newProj.descricao,
+        cor: newProj.cor
+      });
+      if (!error) {
+        setProjetos(prev => [...prev, newProj]);
+        setSelectedProjectId(newId);
+      }
+    } else if (backendConnected) {
       try {
         const res = await fetch('./api.php?action=create_project', {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'X-CSRF-Token': csrfToken
-          },
+          headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
           credentials: 'same-origin',
           body: JSON.stringify({
             nome: newProjectNome.trim(),
@@ -570,14 +814,16 @@ export default function App() {
       return;
     }
 
-    if (backendConnected) {
+    const sb = getSupabaseClient();
+    if (sb && currentUserId && !backendConnected) {
+      await sb.from('projetos').delete().eq('id', projId);
+      setProjetos(prev => prev.filter(p => p.id !== projId));
+      setTarefas(prev => prev.filter(t => t.id_projeto !== projId));
+    } else if (backendConnected) {
       try {
         const res = await fetch('./api.php?action=delete_project', {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'X-CSRF-Token': csrfToken
-          },
+          headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
           credentials: 'same-origin',
           body: JSON.stringify({ project_id: projId, csrf_token: csrfToken })
         });
@@ -607,7 +853,45 @@ export default function App() {
       newTaskProjeto ||
       (selectedProjectId !== 'all' ? selectedProjectId : projetos[0]?.id || 'proj_default');
 
-    if (backendConnected) {
+    const sb = getSupabaseClient();
+    if (sb && currentUserId && !backendConnected) {
+      let mediaObj: AnexoMedia | null = null;
+      if (newTaskFile) {
+        const category = getMediaCategory(newTaskFile.name);
+        mediaObj = {
+          nome_original: newTaskFile.name,
+          caminho: URL.createObjectURL(newTaskFile),
+          tipo: category,
+          tamanho_formatado: `${(newTaskFile.size / (1024 * 1024)).toFixed(1)} MB`
+        };
+      }
+      const newId = `task_${Date.now()}`;
+      const newTask: Tarefa = {
+        id: newId,
+        id_projeto: targetProj,
+        titulo: newTaskTitulo.trim(),
+        descricao_detalhada: newTaskDesc.trim(),
+        prioridade: newTaskPrioridade,
+        status: newTaskStatus,
+        data_limite: newTaskDataLimite,
+        criado_em: new Date().toISOString().replace('T', ' ').substring(0, 19),
+        anexo: mediaObj
+      };
+      const { error } = await sb.from('tarefas').insert({
+        id: newId,
+        user_id: currentUserId,
+        id_projeto: targetProj,
+        titulo: newTask.titulo,
+        descricao_detalhada: newTask.descricao_detalhada,
+        prioridade: newTask.prioridade,
+        status: newTask.status,
+        data_limite: newTaskDataLimite || null,
+        anexo: mediaObj
+      });
+      if (!error) {
+        setTarefas(prev => [newTask, ...prev]);
+      }
+    } else if (backendConnected) {
       try {
         const formData = new FormData();
         formData.append('action', 'create_task');
@@ -624,7 +908,7 @@ export default function App() {
 
         const res = await fetch('./api.php', {
           method: 'POST',
-          headers: { 'X-CSRF-Token': csrfToken },
+          headers: getAuthHeaders(),
           credentials: 'same-origin',
           body: formData
         });
@@ -674,14 +958,14 @@ export default function App() {
       prev.map(t => (t.id === taskId ? { ...t, status: newStatus } : t))
     );
 
-    if (backendConnected) {
+    const sb = getSupabaseClient();
+    if (sb && currentUserId && !backendConnected) {
+      await sb.from('tarefas').update({ status: newStatus }).eq('id', taskId);
+    } else if (backendConnected) {
       try {
         const res = await fetch('./api.php?action=update_status', {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'X-CSRF-Token': csrfToken
-          },
+          headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
           credentials: 'same-origin',
           body: JSON.stringify({
             task_id: taskId,
@@ -704,14 +988,14 @@ export default function App() {
 
     setTarefas(prev => prev.filter(t => t.id !== taskId));
 
-    if (backendConnected) {
+    const sb = getSupabaseClient();
+    if (sb && currentUserId && !backendConnected) {
+      await sb.from('tarefas').delete().eq('id', taskId);
+    } else if (backendConnected) {
       try {
         await fetch('./api.php?action=delete_task', {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'X-CSRF-Token': csrfToken
-          },
+          headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
           credentials: 'same-origin',
           body: JSON.stringify({ task_id: taskId, csrf_token: csrfToken })
         });
@@ -732,7 +1016,24 @@ export default function App() {
     e.preventDefault();
     if (!editingTask || !editingTask.titulo.trim()) return;
 
-    if (backendConnected) {
+    const sb = getSupabaseClient();
+    if (sb && currentUserId && !backendConnected) {
+      await sb
+        .from('tarefas')
+        .update({
+          id_projeto: editingTask.id_projeto,
+          titulo: editingTask.titulo.trim(),
+          descricao_detalhada: editingTask.descricao_detalhada || '',
+          prioridade: editingTask.prioridade,
+          status: editingTask.status,
+          data_limite: editingTask.data_limite || null,
+          anexo: editingTask.anexo
+        })
+        .eq('id', editingTask.id);
+      setTarefas(prev =>
+        prev.map(t => (t.id === editingTask.id ? editingTask : t))
+      );
+    } else if (backendConnected) {
       try {
         const formData = new FormData();
         formData.append('action', 'update_task');
@@ -751,7 +1052,7 @@ export default function App() {
 
         const res = await fetch('./api.php', {
           method: 'POST',
-          headers: { 'X-CSRF-Token': csrfToken },
+          headers: getAuthHeaders(),
           credentials: 'same-origin',
           body: formData
         });
@@ -800,10 +1101,7 @@ export default function App() {
       if (backendConnected) {
         const res = await fetch('./api.php?action=import_backup', {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'X-CSRF-Token': csrfToken
-          },
+          headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
           credentials: 'same-origin',
           body: JSON.stringify({ backup_json: text, csrf_token: csrfToken })
         });
@@ -1162,114 +1460,36 @@ export default function App() {
     );
   };
 
-  // TELA DE AUTENTICAÇÃO LIMPA E MINIMALISTA
-  if (!isLoadingAuth && !isAuthenticated) {
-    return (
+  return (
+    <ProtectedRoute
+      isAuthenticated={isAuthenticated}
+      isLoading={isLoadingAuth}
+      route={route}
+      navigate={navigate}
+      theme={theme}
+      fontFamilyCss={activeFontFamilyCss}
+      fallbackAuthScreen={
+        <AuthScreen
+          route={route}
+          navigate={navigate}
+          theme={theme}
+          onToggleTheme={() => setTheme(prev => (prev === 'dark' ? 'light' : 'dark'))}
+          fontFamilyCss={activeFontFamilyCss}
+          supabaseEnabled={supabaseEnabled}
+          onLogin={handleAuthLogin}
+          onForgotPassword={handleAuthForgotPassword}
+          onResetPassword={handleAuthResetPassword}
+        />
+      }
+    >
       <div
         style={{ fontFamily: activeFontFamilyCss }}
-        className={`min-h-screen flex items-center justify-center p-4 transition-colors relative ${
-          theme === 'dark' ? 'bg-[#09090b] text-zinc-100' : 'bg-[#eaedf1] text-slate-900'
+        className={`min-h-screen flex flex-col transition-colors duration-200 ${
+          theme === 'dark'
+            ? 'bg-[#09090b] text-zinc-200'
+            : 'bg-[#eaedf1] text-slate-800'
         }`}
       >
-        <button
-          type="button"
-          onClick={() => setTheme(prev => (prev === 'dark' ? 'light' : 'dark'))}
-          className={`absolute top-4 right-4 p-2.5 rounded-xl border transition-colors cursor-pointer ${
-            theme === 'dark'
-              ? 'bg-[#121215] border-zinc-800 text-zinc-300 hover:bg-zinc-800'
-              : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100 shadow-2xs'
-          }`}
-          title={theme === 'dark' ? 'Alternar para modo claro' : 'Alternar para modo escuro'}
-        >
-          {theme === 'dark' ? <Sun className="w-4 h-4 text-amber-400" /> : <Moon className="w-4 h-4 text-slate-700" />}
-        </button>
-
-        <div
-          className={`w-full max-w-sm rounded-2xl border p-6 sm:p-8 shadow-2xl ${
-            theme === 'dark'
-              ? 'bg-[#121215] border-zinc-800'
-              : 'bg-white border-slate-300'
-          }`}
-        >
-          <div className="flex flex-col items-center text-center mb-6">
-            <div className="w-12 h-12 rounded-2xl bg-blue-600/15 border border-blue-500/30 flex items-center justify-center text-blue-500 mb-3 shadow-inner">
-              <Lock className="w-6 h-6" />
-            </div>
-            <h1 className="text-lg font-bold tracking-tight">
-              Acesso Restrito
-            </h1>
-          </div>
-
-          <form onSubmit={handleLogin} className="space-y-4">
-            <div>
-              <label className="block text-[0.75rem] font-semibold uppercase tracking-wider text-zinc-500 mb-1.5">
-                E-mail
-              </label>
-              <input
-                type="email"
-                autoFocus
-                required
-                value={loginEmail}
-                onChange={e => setLoginEmail(e.target.value)}
-                placeholder="seu@email.com"
-                className={`w-full text-sm px-4 py-2.5 rounded-xl border focus:outline-none focus:border-blue-500 transition-colors ${
-                  theme === 'dark'
-                    ? 'bg-[#18181c] border-zinc-800 text-zinc-100 placeholder-zinc-600'
-                    : 'bg-slate-50 border-slate-300 text-slate-900 placeholder-slate-400'
-                }`}
-              />
-            </div>
-
-            <div>
-              <label className="block text-[0.75rem] font-semibold uppercase tracking-wider text-zinc-500 mb-1.5">
-                Senha
-              </label>
-              <div className="relative">
-                <KeyRound className="w-4 h-4 text-zinc-500 absolute left-3.5 top-3" />
-                <input
-                  type="password"
-                  required
-                  value={loginInput}
-                  onChange={e => setLoginInput(e.target.value)}
-                  placeholder="••••••••"
-                  className={`w-full text-sm pl-10 pr-4 py-2.5 rounded-xl border focus:outline-none focus:border-blue-500 transition-colors ${
-                    theme === 'dark'
-                      ? 'bg-[#18181c] border-zinc-800 text-zinc-100 placeholder-zinc-600'
-                      : 'bg-slate-50 border-slate-300 text-slate-900 placeholder-slate-400'
-                  }`}
-                />
-              </div>
-            </div>
-
-            {loginError && (
-              <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-400 text-xs flex items-center gap-2">
-                <AlertTriangle className="w-4 h-4 shrink-0" />
-                <span>{loginError}</span>
-              </div>
-            )}
-
-            <button
-              type="submit"
-              className="w-full py-2.5 px-4 bg-blue-600 hover:bg-blue-500 text-white font-semibold text-xs rounded-xl shadow-md transition-colors flex items-center justify-center gap-2 cursor-pointer"
-            >
-              <Unlock className="w-4 h-4" />
-              <span>Entrar</span>
-            </button>
-          </form>
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div
-      style={{ fontFamily: activeFontFamilyCss }}
-      className={`min-h-screen flex flex-col transition-colors duration-200 ${
-        theme === 'dark'
-          ? 'bg-[#09090b] text-zinc-200'
-          : 'bg-[#eaedf1] text-slate-800'
-      }`}
-    >
       {/* Top Header */}
       <header
         className={`h-14 border-b flex items-center justify-between px-3 sm:px-4 lg:px-6 sticky top-0 z-20 transition-colors ${
@@ -2825,5 +3045,6 @@ export default function App() {
         </div>
       )}
     </div>
+    </ProtectedRoute>
   );
 }

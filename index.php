@@ -135,7 +135,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $redirect_project = $_POST['current_project'] ?? 'all';
     $redirect_filter = $_POST['current_filter'] ?? 'all';
 
-    // Login
+    // Login Exclusivo do Administrador
     if ($action === 'login') {
         $now = time();
         if (($auth_config['lockout_until'] ?? 0) > $now) {
@@ -144,25 +144,52 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         } else {
             $email = trim($_POST['email'] ?? '');
             $password = $_POST['password'] ?? '';
+            $admin_email = trim($ENV['ADMIN_EMAIL'] ?? 'lima7emilly12@gmail.com');
 
-            if (verify_admin_credentials($email, $password, $auth_config, $ENV)) {
-                session_regenerate_id(true);
-                $_SESSION['authenticated'] = true;
-                $_SESSION['admin_email'] = $email;
-                $_SESSION['login_at'] = $now;
-                $auth_config['failed_attempts'] = 0;
-                $auth_config['lockout_until'] = 0;
-                save_auth_config($AUTH_FILE, $auth_config);
-                header("Location: index.php");
-                exit;
+            // Bloqueio rigoroso: Apenas o e-mail do proprietário pode acessar
+            if (mb_strtolower($email, 'UTF-8') !== mb_strtolower($admin_email, 'UTF-8')) {
+                $login_error = 'Acesso restrito. Esta plataforma é de uso exclusivo do proprietário.';
             } else {
-                $auth_config['failed_attempts'] = (int)($auth_config['failed_attempts'] ?? 0) + 1;
-                if ($auth_config['failed_attempts'] >= 5) {
-                    $auth_config['lockout_until'] = $now + 180;
-                    $auth_config['failed_attempts'] = 0;
+                $login_ok = false;
+
+                // 1. Tenta autenticar diretamente no Supabase Auth
+                if ($supabase_active) {
+                    $sb_auth = supabase_auth_sign_in($ENV, $email, $password);
+                    if ($sb_auth['ok']) {
+                        session_regenerate_id(true);
+                        $_SESSION['authenticated'] = true;
+                        $_SESSION['admin_email'] = $email;
+                        $_SESSION['supabase_access_token'] = $sb_auth['session']['access_token'] ?? '';
+                        $_SESSION['supabase_user_id'] = $sb_auth['session']['user']['id'] ?? '';
+                        $_SESSION['login_at'] = $now;
+                        $auth_config['failed_attempts'] = 0;
+                        $auth_config['lockout_until'] = 0;
+                        save_auth_config($AUTH_FILE, $auth_config);
+                        header("Location: index.php");
+                        exit;
+                    }
                 }
-                save_auth_config($AUTH_FILE, $auth_config);
-                $login_error = 'E-mail ou senha inválidos.';
+
+                // 2. Fallback para credenciais locais (.env)
+                if (verify_admin_credentials($email, $password, $auth_config, $ENV)) {
+                    session_regenerate_id(true);
+                    $_SESSION['authenticated'] = true;
+                    $_SESSION['admin_email'] = $email;
+                    $_SESSION['login_at'] = $now;
+                    $auth_config['failed_attempts'] = 0;
+                    $auth_config['lockout_until'] = 0;
+                    save_auth_config($AUTH_FILE, $auth_config);
+                    header("Location: index.php");
+                    exit;
+                } else {
+                    $auth_config['failed_attempts'] = (int)($auth_config['failed_attempts'] ?? 0) + 1;
+                    if ($auth_config['failed_attempts'] >= 5) {
+                        $auth_config['lockout_until'] = $now + 180;
+                        $auth_config['failed_attempts'] = 0;
+                    }
+                    save_auth_config($AUTH_FILE, $auth_config);
+                    $login_error = 'E-mail ou senha inválidos.';
+                }
             }
         }
     }
@@ -786,11 +813,30 @@ function render_task_card_html(array $task, array $projetos, array $folder_color
 
         <div class="w-full max-w-sm rounded-2xl border bg-white dark:bg-dark-panel border-light-border dark:border-dark-border p-6 sm:p-8 shadow-2xl">
             <div class="flex flex-col items-center text-center mb-6">
-                <div class="w-12 h-12 rounded-2xl bg-blue-600/15 border border-blue-500/30 flex items-center justify-center text-blue-500 mb-3">
+                <div class="w-12 h-12 rounded-2xl bg-blue-600/15 border border-blue-500/30 flex items-center justify-center text-blue-500 mb-3 shadow-inner">
                     <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"></path></svg>
                 </div>
                 <h1 class="text-lg font-bold tracking-tight text-slate-900 dark:text-zinc-100">Acesso Restrito</h1>
+                <p class="text-xs text-zinc-500 mt-1">Plataforma exclusiva • Acesso restrito ao administrador</p>
+
+                <!-- SELO DO SUPABASE AUTH -->
+                <div class="mt-3 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[0.68rem] font-medium border <?= $supabase_active ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/25' : 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/25' ?>">
+                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"></path></svg>
+                    <span><?= $supabase_active ? 'Protegido por Supabase Auth' : 'Modo Local (.env) — Configure o Supabase' ?></span>
+                </div>
             </div>
+
+            <?php if ($sec_feedback): ?>
+                <div class="p-3 mb-4 rounded-xl text-xs flex items-center gap-2 <?= ($sec_feedback['type'] ?? '') === 'ok' ? 'bg-emerald-500/10 border border-emerald-500/30 text-emerald-600 dark:text-emerald-400' : 'bg-rose-500/10 border border-rose-500/30 text-rose-500' ?>">
+                    <span><?= h($sec_feedback['text'] ?? '') ?></span>
+                </div>
+            <?php endif; ?>
+
+            <?php if ($login_error !== ''): ?>
+                <div class="p-3 mb-4 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-500 text-xs">
+                    <?= h($login_error) ?>
+                </div>
+            <?php endif; ?>
 
             <form method="POST" action="index.php" class="space-y-4">
                 <input type="hidden" name="action" value="login">
@@ -805,12 +851,6 @@ function render_task_card_html(array $task, array $projetos, array $folder_color
                     <input type="password" name="password" required placeholder="••••••••"
                            class="w-full text-sm px-4 py-2.5 rounded-xl border bg-slate-50 dark:bg-dark-card border-slate-300 dark:border-dark-border text-slate-900 dark:text-zinc-100 focus:outline-none focus:border-blue-500">
                 </div>
-
-                <?php if ($login_error !== ''): ?>
-                    <div class="p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-500 text-xs">
-                        <?= h($login_error) ?>
-                    </div>
-                <?php endif; ?>
 
                 <button type="submit" class="w-full py-2.5 px-4 bg-blue-600 hover:bg-blue-500 text-white font-semibold text-xs rounded-xl shadow-md transition-colors cursor-pointer">
                     Entrar

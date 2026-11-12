@@ -42,7 +42,11 @@ function load_env_config(string $env_file): array {
         'ADMIN_EMAIL' => get_env_var('ADMIN_EMAIL'),
         'ADMIN_PASSWORD' => get_env_var('ADMIN_PASSWORD'),
         'ADMIN_PASSWORD_HASH' => get_env_var('ADMIN_PASSWORD_HASH'),
+        'VITE_SUPABASE_URL' => get_env_var('VITE_SUPABASE_URL'),
+        'VITE_SUPABASE_PUBLISHABLE_KEY' => get_env_var('VITE_SUPABASE_PUBLISHABLE_KEY'),
+        'VITE_SUPABASE_ANON_KEY' => get_env_var('VITE_SUPABASE_ANON_KEY'),
         'SUPABASE_URL' => get_env_var('SUPABASE_URL'),
+        'SUPABASE_ANON_KEY' => get_env_var('SUPABASE_ANON_KEY'),
         'SUPABASE_KEY' => get_env_var('SUPABASE_KEY'),
     ];
 
@@ -70,10 +74,64 @@ function load_env_config(string $env_file): array {
         }
     }
 
+    if (empty($vars['SUPABASE_URL']) && !empty($vars['VITE_SUPABASE_URL'])) {
+        $vars['SUPABASE_URL'] = $vars['VITE_SUPABASE_URL'];
+    }
+    if (empty($vars['SUPABASE_ANON_KEY'])) {
+        $vars['SUPABASE_ANON_KEY'] = $vars['VITE_SUPABASE_PUBLISHABLE_KEY'] ?: ($vars['VITE_SUPABASE_ANON_KEY'] ?? '');
+    }
+    if (empty($vars['SUPABASE_KEY']) && !empty($vars['SUPABASE_ANON_KEY'])) {
+        $vars['SUPABASE_KEY'] = $vars['SUPABASE_ANON_KEY'];
+    }
+
     return $vars;
 }
 
 $ENV = load_env_config($ENV_FILE);
+
+/**
+ * Verifica se uma chave do Supabase é segura para o cliente (Publishable / Anon)
+ * Nunca expõe chaves secret / service_role ao navegador
+ */
+function is_safe_publishable_key(string $key): bool {
+    $k = trim($key);
+    if ($k === '' || str_contains($k, 'sua_chave_')) {
+        return false;
+    }
+    if (str_starts_with($k, 'sb_secret_')) {
+        return false;
+    }
+    if (str_starts_with($k, 'sb_publishable_')) {
+        return true;
+    }
+    // Se for JWT legado (3 partes), verifica que role === 'anon'
+    $parts = explode('.', $k);
+    if (count($parts) === 3) {
+        $payload_raw = base64_decode(strtr($parts[1], '-_', '+/'), true);
+        if ($payload_raw !== false) {
+            $payload = json_decode($payload_raw, true);
+            if (is_array($payload) && ($payload['role'] ?? '') === 'service_role') {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+function get_public_supabase_key(array $env): string {
+    $candidates = [
+        $env['VITE_SUPABASE_PUBLISHABLE_KEY'] ?? '',
+        $env['SUPABASE_ANON_KEY'] ?? '',
+        $env['VITE_SUPABASE_ANON_KEY'] ?? '',
+        $env['SUPABASE_KEY'] ?? ''
+    ];
+    foreach ($candidates as $cand) {
+        if (is_safe_publishable_key((string)$cand)) {
+            return trim((string)$cand);
+        }
+    }
+    return '';
+}
 
 /**
  * Verifica se o Supabase está configurado no .env
@@ -84,11 +142,171 @@ function is_supabase_configured(array $env): bool {
     return $url !== ''
         && $key !== ''
         && !str_contains($url, 'SEU_PROJETO_ID')
-        && !str_contains($key, 'sua_chave_supabase');
+        && !str_contains($key, 'sua_chave_');
+}
+
+/**
+ * Extrai o Bearer token (JWT do Supabase Auth) enviado pelo cliente React
+ */
+function get_bearer_token(): string {
+    $auth_header = $_SERVER['HTTP_AUTHORIZATION'] ?? ($_SERVER['REDIRECT_HTTP_AUTHORIZATION'] ?? '');
+    if ($auth_header === '' && function_exists('getallheaders')) {
+        $headers = getallheaders();
+        if (is_array($headers)) {
+            foreach ($headers as $k => $v) {
+                if (strtolower((string)$k) === 'authorization') {
+                    $auth_header = (string)$v;
+                    break;
+                }
+            }
+        }
+    }
+    if (preg_match('/^Bearer\s+(.+)$/i', trim($auth_header), $matches)) {
+        return trim($matches[1]);
+    }
+    return (string)($_SESSION['supabase_access_token'] ?? '');
+}
+
+/**
+ * Valida o JWT do usuário diretamente na API do Supabase Auth (/auth/v1/user)
+ */
+function verify_supabase_jwt(array $env, string $jwt): ?array {
+    if ($jwt === '' || !is_supabase_configured($env) || !function_exists('curl_init')) {
+        return null;
+    }
+
+    // Cache em memória da requisição atual
+    static $verified_cache = [];
+    if (array_key_exists($jwt, $verified_cache)) {
+        return $verified_cache[$jwt];
+    }
+
+    $base_url = rtrim(trim($env['SUPABASE_URL']), '/');
+    $api_key = get_public_supabase_key($env) ?: trim($env['SUPABASE_KEY']);
+    $url = $base_url . '/auth/v1/user';
+
+    $ch = curl_init($url);
+    curl_setopt($ch, CURLOPT_HTTPHEADER, [
+        'apikey: ' . $api_key,
+        'Authorization: Bearer ' . $jwt,
+        'Accept: application/json'
+    ]);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 8);
+
+    $response = curl_exec($ch);
+    $status = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+
+    if ($response === false || $status < 200 || $status >= 300) {
+        $verified_cache[$jwt] = null;
+        return null;
+    }
+
+    $user = json_decode($response, true);
+    if (!is_array($user) || empty($user['id'])) {
+        $verified_cache[$jwt] = null;
+        return null;
+    }
+
+    $verified_cache[$jwt] = [
+        'id' => (string)$user['id'],
+        'email' => (string)($user['email'] ?? ''),
+        'jwt' => $jwt
+    ];
+    return $verified_cache[$jwt];
+}
+
+/**
+ * Autentica usuário com e-mail e senha no Supabase Auth (/auth/v1/token?grant_type=password)
+ */
+function supabase_auth_sign_in(array $env, string $email, string $password): array {
+    if (!is_supabase_configured($env) || !function_exists('curl_init')) {
+        return ['ok' => false, 'error' => 'Supabase não configurado ou cURL ausente.'];
+    }
+
+    $base_url = rtrim(trim($env['SUPABASE_URL']), '/');
+    $api_key = get_public_supabase_key($env) ?: trim($env['SUPABASE_KEY']);
+    $url = $base_url . '/auth/v1/token?grant_type=password';
+
+    $ch = curl_init($url);
+    curl_setopt($ch, CURLOPT_HTTPHEADER, [
+        'apikey: ' . $api_key,
+        'Content-Type: application/json',
+        'Accept: application/json'
+    ]);
+    curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode([
+        'email' => $email,
+        'password' => $password
+    ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 10);
+
+    $response = curl_exec($ch);
+    $status = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+
+    if ($response === false) {
+        return ['ok' => false, 'error' => 'Não foi possível conectar ao servidor do Supabase.'];
+    }
+
+    $decoded = json_decode($response, true);
+    if ($status >= 200 && $status < 300 && !empty($decoded['access_token'])) {
+        return ['ok' => true, 'session' => $decoded];
+    }
+
+    $err_desc = $decoded['error_description'] ?? ($decoded['msg'] ?? ($decoded['message'] ?? 'E-mail ou senha inválidos.'));
+    if ($err_desc === 'Invalid login credentials') {
+        $err_desc = 'E-mail ou senha inválidos no Supabase.';
+    }
+    return ['ok' => false, 'error' => $err_desc];
+}
+
+/**
+ * Cria nova conta com e-mail e senha no Supabase Auth (/auth/v1/signup)
+ */
+function supabase_auth_sign_up(array $env, string $email, string $password): array {
+    if (!is_supabase_configured($env) || !function_exists('curl_init')) {
+        return ['ok' => false, 'error' => 'Supabase não configurado ou cURL ausente.'];
+    }
+
+    $base_url = rtrim(trim($env['SUPABASE_URL']), '/');
+    $api_key = get_public_supabase_key($env) ?: trim($env['SUPABASE_KEY']);
+    $url = $base_url . '/auth/v1/signup';
+
+    $ch = curl_init($url);
+    curl_setopt($ch, CURLOPT_HTTPHEADER, [
+        'apikey: ' . $api_key,
+        'Content-Type: application/json',
+        'Accept: application/json'
+    ]);
+    curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode([
+        'email' => $email,
+        'password' => $password
+    ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 10);
+
+    $response = curl_exec($ch);
+    $status = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+
+    if ($response === false) {
+        return ['ok' => false, 'error' => 'Não foi possível conectar ao servidor do Supabase.'];
+    }
+
+    $decoded = json_decode($response, true);
+    if ($status >= 200 && $status < 300) {
+        return ['ok' => true, 'data' => $decoded];
+    }
+
+    $err_desc = $decoded['error_description'] ?? ($decoded['msg'] ?? ($decoded['message'] ?? 'Erro ao cadastrar usuário no Supabase.'));
+    return ['ok' => false, 'error' => $err_desc];
 }
 
 /**
  * Executa requisição HTTPS para a API REST (PostgREST) do Supabase
+ * Quando há um JWT de usuário autenticado, repassa no header Authorization para respeitar o RLS!
  */
 function supabase_request(
     array $env,
@@ -103,13 +321,15 @@ function supabase_request(
     }
 
     $base_url = rtrim(trim($env['SUPABASE_URL']), '/');
-    $api_key = trim($env['SUPABASE_KEY']);
+    $api_key = get_public_supabase_key($env) ?: trim($env['SUPABASE_KEY']);
+    $user_jwt = get_bearer_token();
+    $bearer = $user_jwt !== '' ? $user_jwt : trim($env['SUPABASE_KEY']);
     $url = $base_url . '/rest/v1/' . $table . ($query !== '' ? '?' . $query : '');
 
     $ch = curl_init($url);
     $headers = [
         'apikey: ' . $api_key,
-        'Authorization: Bearer ' . $api_key,
+        'Authorization: Bearer ' . $bearer,
         'Content-Type: application/json',
         'Accept: application/json',
         'Prefer: ' . $prefer
@@ -273,13 +493,46 @@ function verify_admin_credentials(string $input_email, string $input_password, a
 }
 
 /**
- * Verifica se o usuário está autenticado na sessão
+ * Obtém o usuário autenticado via Supabase Auth JWT ou Sessão PHP
+ */
+function get_authenticated_user(array $auth_config, array $env): ?array {
+    $jwt = get_bearer_token();
+    if ($jwt !== '') {
+        $sb_user = verify_supabase_jwt($env, $jwt);
+        if ($sb_user !== null) {
+            return [
+                'id' => $sb_user['id'],
+                'email' => $sb_user['email'],
+                'provider' => 'supabase'
+            ];
+        }
+    }
+
+    if (!empty($_SESSION['authenticated']) && $_SESSION['authenticated'] === true) {
+        return [
+            'id' => (string)($_SESSION['supabase_user_id'] ?? 'local_admin'),
+            'email' => (string)($_SESSION['admin_email'] ?? ($env['ADMIN_EMAIL'] ?? 'admin@meusoftware.com')),
+            'provider' => !empty($_SESSION['supabase_user_id']) ? 'supabase' : 'env'
+        ];
+    }
+
+    if (empty($auth_config['require_auth'])) {
+        return [
+            'id' => 'local_admin',
+            'email' => (string)($env['ADMIN_EMAIL'] ?? 'admin@meusoftware.com'),
+            'provider' => 'env'
+        ];
+    }
+
+    return null;
+}
+
+/**
+ * Verifica se o usuário está autenticado via Supabase Auth JWT ou na sessão PHP
  */
 function is_authenticated(array $auth_config): bool {
-    if (empty($auth_config['require_auth'])) {
-        return true;
-    }
-    return !empty($_SESSION['authenticated']) && $_SESSION['authenticated'] === true;
+    global $ENV;
+    return get_authenticated_user($auth_config, $ENV ?? []) !== null;
 }
 
 /**
@@ -414,14 +667,23 @@ function sync_all_to_supabase(array $env, array $data): array {
         return ['ok' => false, 'error' => 'Configure SUPABASE_URL e SUPABASE_KEY no arquivo .env primeiro.'];
     }
 
+    $sb_user = verify_supabase_jwt($env, get_bearer_token());
+    $user_id = $sb_user['id'] ?? null;
+
     if (!empty($data['projetos'])) {
-        $proj_payload = array_map(fn($p) => [
-            'id' => $p['id'],
-            'nome' => $p['nome'],
-            'descricao' => $p['descricao'] ?? '',
-            'cor' => $p['cor'] ?? 'blue',
-            'criado_em' => $p['criado_em'] ?? date('Y-m-d H:i:s')
-        ], $data['projetos']);
+        $proj_payload = array_map(function($p) use ($user_id) {
+            $row = [
+                'id' => $p['id'],
+                'nome' => $p['nome'],
+                'descricao' => $p['descricao'] ?? '',
+                'cor' => $p['cor'] ?? 'blue',
+                'criado_em' => $p['criado_em'] ?? date('Y-m-d H:i:s')
+            ];
+            if ($user_id !== null) {
+                $row['user_id'] = $user_id;
+            }
+            return $row;
+        }, $data['projetos']);
 
         $res_p = supabase_request(
             $env,
@@ -437,17 +699,23 @@ function sync_all_to_supabase(array $env, array $data): array {
     }
 
     if (!empty($data['tarefas'])) {
-        $task_payload = array_map(fn($t) => [
-            'id' => $t['id'],
-            'id_projeto' => $t['id_projeto'],
-            'titulo' => $t['titulo'],
-            'descricao_detalhada' => $t['descricao_detalhada'] ?? '',
-            'prioridade' => $t['prioridade'] ?? 'Média',
-            'status' => $t['status'] ?? 'pendente',
-            'data_limite' => !empty($t['data_limite']) ? $t['data_limite'] : null,
-            'anexo' => $t['anexo'] ?? null,
-            'criado_em' => $t['criado_em'] ?? date('Y-m-d H:i:s')
-        ], $data['tarefas']);
+        $task_payload = array_map(function($t) use ($user_id) {
+            $row = [
+                'id' => $t['id'],
+                'id_projeto' => $t['id_projeto'],
+                'titulo' => $t['titulo'],
+                'descricao_detalhada' => $t['descricao_detalhada'] ?? '',
+                'prioridade' => $t['prioridade'] ?? 'Média',
+                'status' => $t['status'] ?? 'pendente',
+                'data_limite' => !empty($t['data_limite']) ? $t['data_limite'] : null,
+                'anexo' => $t['anexo'] ?? null,
+                'criado_em' => $t['criado_em'] ?? date('Y-m-d H:i:s')
+            ];
+            if ($user_id !== null) {
+                $row['user_id'] = $user_id;
+            }
+            return $row;
+        }, $data['tarefas']);
 
         $res_t = supabase_request(
             $env,
@@ -561,12 +829,17 @@ if (basename($_SERVER['SCRIPT_FILENAME'] ?? '') === 'api.php') {
 
     // 1. Estado inicial da sessão e dados
     if ($method === 'GET' && ($action === 'state' || $action === '')) {
-        $authed = is_authenticated($auth_config);
-        if (!$authed) {
+        $auth_user = get_authenticated_user($auth_config, $ENV);
+        $public_sb_url = $supabase_active ? trim($ENV['SUPABASE_URL'] ?? '') : '';
+        $public_sb_key = $supabase_active ? get_public_supabase_key($ENV) : '';
+
+        if ($auth_user === null) {
             echo json_encode([
                 'authenticated' => false,
                 'require_auth' => true,
                 'supabase_configured' => $supabase_active,
+                'supabase_url' => $public_sb_url,
+                'supabase_publishable_key' => $public_sb_key,
                 'is_default_password' => (bool)($auth_config['is_default_password'] ?? false),
                 'csrf_token' => get_csrf_token()
             ]);
@@ -577,8 +850,11 @@ if (basename($_SERVER['SCRIPT_FILENAME'] ?? '') === 'api.php') {
         echo json_encode([
             'authenticated' => true,
             'require_auth' => true,
-            'admin_email' => $_SESSION['admin_email'] ?? ($ENV['ADMIN_EMAIL'] ?? ''),
+            'user' => $auth_user,
+            'admin_email' => $auth_user['email'],
             'supabase_configured' => $supabase_active,
+            'supabase_url' => $public_sb_url,
+            'supabase_publishable_key' => $public_sb_key,
             'is_default_password' => (bool)($auth_config['is_default_password'] ?? false),
             'csrf_token' => get_csrf_token(),
             'projetos' => $data['projetos'],
@@ -602,8 +878,36 @@ if (basename($_SERVER['SCRIPT_FILENAME'] ?? '') === 'api.php') {
 
         $email = trim((string)$param('email', ''));
         $password = (string)$param('password', (string)$param('credential', ''));
+        $admin_email = trim($ENV['ADMIN_EMAIL'] ?? 'lima7emilly12@gmail.com');
 
-        if (verify_admin_credentials($email, $password, $auth_config, $ENV)) {
+        // Bloqueio rigoroso: Apenas o e-mail do proprietário pode acessar
+        if (mb_strtolower($email, 'UTF-8') !== mb_strtolower($admin_email, 'UTF-8')) {
+            http_response_code(403);
+            echo json_encode([
+                'ok' => false,
+                'error' => 'Acesso negado: Plataforma de uso exclusivo do administrador.'
+            ]);
+            exit;
+        }
+
+        $auth_success = false;
+
+        // 1. Tenta autenticar pelo Supabase Auth
+        if ($supabase_active) {
+            $sb_auth = supabase_auth_sign_in($ENV, $email, $password);
+            if ($sb_auth['ok']) {
+                $auth_success = true;
+                $_SESSION['supabase_access_token'] = $sb_auth['session']['access_token'] ?? '';
+                $_SESSION['supabase_user_id'] = $sb_auth['session']['user']['id'] ?? '';
+            }
+        }
+
+        // 2. Fallback para verificação local de credenciais
+        if (!$auth_success && verify_admin_credentials($email, $password, $auth_config, $ENV)) {
+            $auth_success = true;
+        }
+
+        if ($auth_success) {
             session_regenerate_id(true);
             $_SESSION['authenticated'] = true;
             $_SESSION['admin_email'] = $email;
@@ -654,15 +958,17 @@ if (basename($_SERVER['SCRIPT_FILENAME'] ?? '') === 'api.php') {
         exit;
     }
 
+    $current_auth_user = get_authenticated_user($auth_config, $ENV);
+
     // Bloqueia qualquer outra ação se não estiver autenticado
-    if (!is_authenticated($auth_config)) {
+    if ($current_auth_user === null) {
         http_response_code(401);
         echo json_encode(['ok' => false, 'error' => 'Sessão expirada ou bloqueada. Faça login novamente.']);
         exit;
     }
 
-    // Validação de token CSRF em todas as mutações POST
-    if ($method === 'POST') {
+    // Validação de token CSRF em mutações POST baseadas em cookie (ou Bearer JWT validado do Supabase)
+    if ($method === 'POST' && ($current_auth_user['provider'] ?? '') !== 'supabase') {
         $header_csrf = $_SERVER['HTTP_X_CSRF_TOKEN'] ?? null;
         $body_csrf = (string)$param('csrf_token', '');
         $token_to_check = $header_csrf ?: $body_csrf;
@@ -726,7 +1032,11 @@ if (basename($_SERVER['SCRIPT_FILENAME'] ?? '') === 'api.php') {
         ];
 
         if ($supabase_active) {
-            supabase_request($ENV, 'POST', 'projetos', '', $new_proj);
+            $sb_proj = $new_proj;
+            if (($current_auth_user['provider'] ?? '') === 'supabase') {
+                $sb_proj['user_id'] = $current_auth_user['id'];
+            }
+            supabase_request($ENV, 'POST', 'projetos', '', $sb_proj);
         }
 
         $data['projetos'][] = $new_proj;
@@ -805,6 +1115,9 @@ if (basename($_SERVER['SCRIPT_FILENAME'] ?? '') === 'api.php') {
         if ($supabase_active) {
             $sb_task = $new_task;
             $sb_task['data_limite'] = $data_limite !== '' ? $data_limite : null;
+            if (($current_auth_user['provider'] ?? '') === 'supabase') {
+                $sb_task['user_id'] = $current_auth_user['id'];
+            }
             supabase_request($ENV, 'POST', 'tarefas', '', $sb_task);
         }
 
