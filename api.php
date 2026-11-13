@@ -137,8 +137,11 @@ function get_public_supabase_key(array $env): string {
  * Verifica se o Supabase está configurado no .env
  */
 function is_supabase_configured(array $env): bool {
-    $url = trim($env['SUPABASE_URL'] ?? '');
+    $url = trim($env['SUPABASE_URL'] ?? $env['VITE_SUPABASE_URL'] ?? '');
     $key = trim($env['SUPABASE_KEY'] ?? '');
+    if ($key === '') {
+        $key = trim($env['SUPABASE_ANON_KEY'] ?? $env['VITE_SUPABASE_PUBLISHABLE_KEY'] ?? $env['VITE_SUPABASE_ANON_KEY'] ?? '');
+    }
     return $url !== ''
         && $key !== ''
         && !str_contains($url, 'SEU_PROJETO_ID')
