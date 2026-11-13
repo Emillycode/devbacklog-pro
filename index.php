@@ -232,7 +232,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     'criado_em' => date('Y-m-d H:i:s')
                 ];
                 if ($supabase_active) {
-                    supabase_request($ENV, 'POST', 'projetos', '', $new_proj);
+                    $sb_proj = $new_proj;
+                    if (!empty($_SESSION['supabase_user_id'])) {
+                        $sb_proj['user_id'] = $_SESSION['supabase_user_id'];
+                    }
+                    supabase_request($ENV, 'POST', 'projetos', '', $sb_proj);
                 }
                 $data['projetos'][] = $new_proj;
                 save_local_json($DATA_FILE, $data);
@@ -293,6 +297,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 if ($supabase_active) {
                     $sb_task = $new_task;
                     $sb_task['data_limite'] = $data_limite !== '' ? $data_limite : null;
+                    if (!empty($_SESSION['supabase_user_id'])) {
+                        $sb_task['user_id'] = $_SESSION['supabase_user_id'];
+                    }
                     supabase_request($ENV, 'POST', 'tarefas', '', $sb_task);
                 }
                 array_unshift($data['tarefas'], $new_task);

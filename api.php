@@ -596,35 +596,8 @@ function load_app_data(string $file): array {
 
     if (!file_exists($file)) {
         $default = [
-            'projetos' => [
-                [
-                    'id' => 'proj_infra',
-                    'nome' => 'Infraestrutura & DevOps',
-                    'descricao' => 'Melhorias de CI/CD, monitoramento e servidores.',
-                    'cor' => 'blue',
-                    'criado_em' => date('Y-m-d H:i:s')
-                ],
-                [
-                    'id' => 'proj_ui',
-                    'nome' => 'Design System & UI',
-                    'descricao' => 'Tokens de cores, tipografia e acessibilidade.',
-                    'cor' => 'purple',
-                    'criado_em' => date('Y-m-d H:i:s')
-                ]
-            ],
-            'tarefas' => [
-                [
-                    'id' => 'task_1',
-                    'id_projeto' => 'proj_infra',
-                    'titulo' => 'Implementar rotação automática de logs e backup',
-                    'descricao_detalhada' => 'Configurar rotina cron com retenção de 30 dias para segurança concorrente.',
-                    'prioridade' => 'Alta',
-                    'status' => 'em_andamento',
-                    'data_limite' => date('Y-m-d'),
-                    'criado_em' => date('Y-m-d H:i:s'),
-                    'anexo' => null
-                ]
-            ]
+            'projetos' => [],
+            'tarefas' => []
         ];
         save_local_json($file, $default);
         return $default;

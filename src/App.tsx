@@ -96,70 +96,9 @@ const FOLDER_COLOR_MAP: Record<FolderColor, { dot: string; badgeDark: string; ba
   }
 };
 
-const INITIAL_PROJECTS: Projeto[] = [
-  {
-    id: 'proj_infra',
-    nome: 'Infraestrutura & DevOps',
-    descricao: 'Melhorias de CI/CD, monitoramento e arquitetura de servidores.',
-    cor: 'blue',
-    criado_em: '2026-10-25 09:30:00'
-  },
-  {
-    id: 'proj_ui',
-    nome: 'Design System & UI',
-    descricao: 'Refatoração de componentes, tokens de cor e acessibilidade.',
-    cor: 'purple',
-    criado_em: '2026-10-26 14:15:00'
-  },
-  {
-    id: 'proj_api',
-    nome: 'API & Integrações',
-    descricao: 'Endpoints REST, autenticação e documentação técnica.',
-    cor: 'emerald',
-    criado_em: '2026-10-27 11:00:00'
-  }
-];
+const INITIAL_PROJECTS: Projeto[] = [];
 
-const INITIAL_TASKS: Tarefa[] = [
-  {
-    id: 'task_1',
-    id_projeto: 'proj_infra',
-    titulo: 'Implementar rotação automática de logs e backup diário',
-    descricao_detalhada: 'Configurar rotina cron com compressão gzip e retenção de 30 dias para segurança concorrente.',
-    prioridade: 'Alta',
-    status: 'em_andamento',
-    data_limite: new Date().toISOString().split('T')[0],
-    criado_em: '2026-10-27 10:00:00',
-    anexo: null
-  },
-  {
-    id: 'task_2',
-    id_projeto: 'proj_ui',
-    titulo: 'Novo layout com tema White suave e Quadro Kanban',
-    descricao_detalhada: 'Paleta matte confortável que evita cansaço visual, com tipografia customizável e anexo sob demanda.',
-    prioridade: 'Alta',
-    status: 'pendente',
-    data_limite: new Date(Date.now() + 86400000).toISOString().split('T')[0],
-    criado_em: '2026-10-27 15:00:00',
-    anexo: {
-      nome_original: 'mockup_dashboard_v2.png',
-      caminho: 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=600&q=80',
-      tipo: 'imagem',
-      tamanho_formatado: '420 KB'
-    }
-  },
-  {
-    id: 'task_3',
-    id_projeto: 'proj_api',
-    titulo: 'Validação segura de uploads de fotos e vídeos com player HTML5',
-    descricao_detalhada: 'Gravação demonstrando o upload seguro com visualização sob demanda.',
-    prioridade: 'Média',
-    status: 'concluido',
-    data_limite: new Date(Date.now() + 86400000 * 3).toISOString().split('T')[0],
-    criado_em: '2026-10-28 11:20:00',
-    anexo: null
-  }
-];
+const INITIAL_TASKS: Tarefa[] = [];
 
 export default function App() {
   // Customization States with localStorage persistence
