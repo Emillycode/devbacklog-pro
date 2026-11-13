@@ -287,6 +287,8 @@ export default function App() {
   const [editingTask, setEditingTask] = useState<Tarefa | null>(null);
   const [editTaskNewFile, setEditTaskNewFile] = useState<File | null>(null);
   const [editTaskRemoveMedia, setEditTaskRemoveMedia] = useState<boolean>(false);
+  const [settingsSaveSuccess, setSettingsSaveSuccess] = useState<boolean>(false);
+  const [isSavingSettings, setIsSavingSettings] = useState<boolean>(false);
   const editFileInputRef = useRef<HTMLInputElement>(null);
   const backupInputRef = useRef<HTMLInputElement>(null);
 
@@ -1120,6 +1122,43 @@ export default function App() {
       alert('Não foi possível ler o arquivo JSON.');
     } finally {
       if (backupInputRef.current) backupInputRef.current.value = '';
+    }
+  };
+
+  const handleSaveVisualSettings = async () => {
+    setIsSavingSettings(true);
+    try {
+      localStorage.setItem('app_theme', theme);
+      localStorage.setItem('app_font_size', fontSize);
+      localStorage.setItem('app_font_family', fontFamily);
+    } catch {
+      // ignore
+    }
+
+    document.cookie = `app_theme=${theme};path=/;max-age=31536000;SameSite=Lax`;
+    document.cookie = `app_font_size=${fontSize};path=/;max-age=31536000;SameSite=Lax`;
+    document.cookie = `app_font_family=${encodeURIComponent(fontFamily)};path=/;max-age=31536000;SameSite=Lax`;
+
+    try {
+      const formData = new FormData();
+      formData.append('action', 'save_preferences');
+      formData.append('csrf_token', csrfToken);
+      formData.append('theme', theme);
+      formData.append('font_size', fontSize);
+      formData.append('font_family', fontFamily);
+
+      await fetch('./api.php?action=save_preferences', {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        credentials: 'same-origin',
+        body: formData
+      });
+    } catch {
+      // ignore network errors if working offline
+    } finally {
+      setIsSavingSettings(false);
+      setSettingsSaveSuccess(true);
+      setTimeout(() => setSettingsSaveSuccess(false), 3500);
     }
   };
 
@@ -2651,22 +2690,47 @@ export default function App() {
 
             {/* Rodapé do Modal */}
             <div
-              className={`p-4 border-t flex items-center justify-between ${
+              className={`p-4 border-t flex items-center justify-between gap-3 ${
                 theme === 'dark'
                   ? 'border-zinc-800 bg-[#16161a]'
                   : 'border-slate-200 bg-white'
               }`}
             >
-              <span className="text-[0.75rem] text-zinc-500">
-                Preferências salvas automaticamente no navegador.
-              </span>
-              <button
-                type="button"
-                onClick={() => setShowSettingsModal(false)}
-                className="text-xs px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg font-medium cursor-pointer transition-colors"
-              >
-                Fechar
-              </button>
+              <div className="flex items-center gap-2">
+                {settingsSaveSuccess && (
+                  <span className="text-xs text-emerald-500 font-medium flex items-center gap-1 animate-in fade-in duration-200">
+                    <Check className="w-4 h-4 text-emerald-500" />
+                    <span>Preferências salvas com sucesso!</span>
+                  </span>
+                )}
+                {!settingsSaveSuccess && (
+                  <span className="text-[0.75rem] text-zinc-500">
+                    Clique em Salvar para fixar suas preferências visuais.
+                  </span>
+                )}
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowSettingsModal(false)}
+                  className={`text-xs px-3.5 py-2 border rounded-lg font-medium cursor-pointer transition-colors ${
+                    theme === 'dark'
+                      ? 'border-zinc-700 text-zinc-300 hover:bg-zinc-800'
+                      : 'border-slate-300 text-slate-700 hover:bg-slate-100'
+                  }`}
+                >
+                  Fechar
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSaveVisualSettings}
+                  disabled={isSavingSettings}
+                  className="text-xs px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-lg font-medium cursor-pointer transition-colors flex items-center gap-1.5 shadow-sm"
+                >
+                  <Check className="w-3.5 h-3.5" />
+                  <span>{isSavingSettings ? 'Salvando...' : 'Salvar Alterações'}</span>
+                </button>
+              </div>
             </div>
           </div>
         </div>

@@ -982,6 +982,49 @@ if (basename($_SERVER['SCRIPT_FILENAME'] ?? '') === 'api.php') {
         }
     }
 
+    // Salvar Preferências Visuais (Tema, Fonte, Escala)
+    if ($method === 'POST' && $action === 'save_preferences') {
+        $p_theme = (string)$param('theme', 'dark');
+        if (!in_array($p_theme, ['dark', 'light'], true)) {
+            $p_theme = 'dark';
+        }
+
+        $p_font_size = (string)$param('font_size', 'medium');
+        if (!in_array($p_font_size, ['small', 'medium', 'large'], true)) {
+            $p_font_size = 'medium';
+        }
+
+        $p_font_family = (string)$param('font_family', 'Roboto');
+        if (!in_array($p_font_family, ['Helvetica / Arial', 'Montserrat', 'Roboto', 'Open Sans / Lato'], true)) {
+            $p_font_family = 'Roboto';
+        }
+
+        // Salva na sessão PHP
+        $_SESSION['app_theme'] = $p_theme;
+        $_SESSION['app_font_size'] = $p_font_size;
+        $_SESSION['app_font_family'] = $p_font_family;
+
+        // Define cookies com 1 ano de validade
+        $cookie_opts = [
+            'expires' => time() + 31536000,
+            'path' => '/',
+            'httponly' => false,
+            'samesite' => 'Lax'
+        ];
+        setcookie('app_theme', $p_theme, $cookie_opts);
+        setcookie('app_font_size', $p_font_size, $cookie_opts);
+        setcookie('app_font_family', rawurlencode($p_font_family), $cookie_opts);
+
+        echo json_encode([
+            'ok' => true,
+            'message' => 'Preferências visuais salvas com sucesso!',
+            'theme' => $p_theme,
+            'font_size' => $p_font_size,
+            'font_family' => $p_font_family
+        ]);
+        exit;
+    }
+
     // Exportar Backup JSON
     if ($action === 'export_backup') {
         $data = load_app_data($DATA_FILE);

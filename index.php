@@ -15,18 +15,19 @@ header('X-Frame-Options: SAMEORIGIN');
 $auth_config = load_auth_config($AUTH_FILE);
 $csrf_token = get_csrf_token();
 
-// Configurações Visuais via Cookie (sincronizadas com localStorage no cliente)
-$theme = $_COOKIE['app_theme'] ?? 'dark';
+// Configurações Visuais via Sessão e Cookies (com fallback reativo)
+$theme = $_SESSION['app_theme'] ?? ($_COOKIE['app_theme'] ?? 'dark');
 if (!in_array($theme, ['dark', 'light'], true)) {
     $theme = 'dark';
 }
 
-$font_size = $_COOKIE['app_font_size'] ?? 'medium';
+$font_size = $_SESSION['app_font_size'] ?? ($_COOKIE['app_font_size'] ?? 'medium');
 if (!in_array($font_size, ['small', 'medium', 'large'], true)) {
     $font_size = 'medium';
 }
 
-$font_family = isset($_COOKIE['app_font_family']) ? rawurldecode($_COOKIE['app_font_family']) : 'Roboto';
+$raw_cookie_font = isset($_COOKIE['app_font_family']) ? rawurldecode($_COOKIE['app_font_family']) : 'Roboto';
+$font_family = $_SESSION['app_font_family'] ?? $raw_cookie_font;
 if (!in_array($font_family, ['Helvetica / Arial', 'Montserrat', 'Roboto', 'Open Sans / Lato'], true)) {
     $font_family = 'Roboto';
 }
@@ -390,14 +391,43 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
 
         // 7. Salvar Configurações Visuais
-        if ($action === 'save_settings') {
+        if ($action === 'save_settings' || $action === 'save_preferences') {
             $new_theme = $_POST['theme'] ?? 'dark';
-            $new_font_size = $_POST['font_size'] ?? 'medium';
-            $new_font_family = $_POST['font_family'] ?? 'Roboto';
+            if (!in_array($new_theme, ['dark', 'light'], true)) {
+                $new_theme = 'dark';
+            }
 
-            setcookie('app_theme', $new_theme, time() + 31536000, '/');
-            setcookie('app_font_size', $new_font_size, time() + 31536000, '/');
-            setcookie('app_font_family', rawurlencode($new_font_family), time() + 31536000, '/');
+            $new_font_size = $_POST['font_size'] ?? 'medium';
+            if (!in_array($new_font_size, ['small', 'medium', 'large'], true)) {
+                $new_font_size = 'medium';
+            }
+
+            $new_font_family = $_POST['font_family'] ?? 'Roboto';
+            if (!in_array($new_font_family, ['Helvetica / Arial', 'Montserrat', 'Roboto', 'Open Sans / Lato'], true)) {
+                $new_font_family = 'Roboto';
+            }
+
+            $_SESSION['app_theme'] = $new_theme;
+            $_SESSION['app_font_size'] = $new_font_size;
+            $_SESSION['app_font_family'] = $new_font_family;
+
+            $cookie_opts = [
+                'expires' => time() + 31536000,
+                'path' => '/',
+                'httponly' => false,
+                'samesite' => 'Lax'
+            ];
+            setcookie('app_theme', $new_theme, $cookie_opts);
+            setcookie('app_font_size', $new_font_size, $cookie_opts);
+            setcookie('app_font_family', rawurlencode($new_font_family), $cookie_opts);
+
+            $_SESSION['sec_feedback'] = ['type' => 'ok', 'text' => 'Preferências visuais salvas com sucesso!'];
+
+            if (!empty($_SERVER['HTTP_X_REQUESTED_WITH']) || (isset($_SERVER['HTTP_ACCEPT']) && str_contains($_SERVER['HTTP_ACCEPT'], 'application/json'))) {
+                header('Content-Type: application/json');
+                echo json_encode(['ok' => true, 'message' => 'Preferências visuais salvas com sucesso!']);
+                exit;
+            }
         }
 
         // 8. Importar Backup JSON
@@ -1292,11 +1322,22 @@ function render_task_card_html(array $task, array $projetos, array $folder_color
                     </div>
                 </div>
 
+                <div id="save-visual-feedback" class="hidden p-3 rounded-xl border bg-emerald-500/10 border-emerald-500/30 text-emerald-600 dark:text-emerald-400 text-xs flex items-center gap-2">
+                    <svg class="w-4 h-4 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>
+                    <span>Preferências visuais salvas com sucesso!</span>
+                </div>
+
                 <div class="pt-3 border-t border-slate-200 dark:border-dark-border flex items-center justify-between">
-                    <span class="text-[0.75rem] text-zinc-500">Preferências aplicadas e salvas automaticamente no navegador.</span>
-                    <button type="button" onclick="closeModal('settings-modal')" class="text-xs px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg font-medium cursor-pointer">
-                        Fechar
-                    </button>
+                    <span class="text-[0.75rem] text-zinc-500">Clique para salvar e aplicar em toda a aplicação.</span>
+                    <div class="flex items-center gap-2">
+                        <button type="button" onclick="closeModal('settings-modal')" class="text-xs px-3.5 py-2 border border-slate-300 dark:border-dark-border text-slate-700 dark:text-zinc-300 rounded-lg hover:bg-slate-100 dark:hover:bg-zinc-800 transition-colors cursor-pointer">
+                            Fechar
+                        </button>
+                        <button type="button" id="btn-save-visual" onclick="saveVisualPreferencesToServer()" class="text-xs px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg font-medium cursor-pointer flex items-center gap-1.5 transition-colors shadow-sm">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>
+                            <span>Salvar Alterações</span>
+                        </button>
+                    </div>
                 </div>
             </div>
 
@@ -1576,6 +1617,62 @@ function render_task_card_html(array $task, array $projetos, array $folder_color
 
         // Inicializa preferências imediatamente ao carregar
         applyVisualPreferences();
+
+        async function saveVisualPreferencesToServer() {
+            const btn = document.getElementById('btn-save-visual');
+            const feedback = document.getElementById('save-visual-feedback');
+            const originalHtml = btn ? btn.innerHTML : '';
+
+            if (btn) {
+                btn.disabled = true;
+                btn.innerHTML = '<svg class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path></svg> <span>Salvando...</span>';
+            }
+
+            // 1. Garante a gravação no LocalStorage do navegador
+            try {
+                localStorage.setItem('app_theme', currentTheme);
+                localStorage.setItem('app_font_family', currentFontFamily);
+                localStorage.setItem('app_font_size', currentFontSize);
+            } catch (e) {}
+
+            // 2. Garante a gravação nos Cookies do navegador
+            document.cookie = 'app_theme=' + currentTheme + ';path=/;max-age=31536000;SameSite=Lax';
+            document.cookie = 'app_font_family=' + encodeURIComponent(currentFontFamily) + ';path=/;max-age=31536000;SameSite=Lax';
+            document.cookie = 'app_font_size=' + currentFontSize + ';path=/;max-age=31536000;SameSite=Lax';
+
+            // 3. Persiste no servidor (Sessão PHP e Cookies HTTP)
+            try {
+                const formData = new FormData();
+                formData.append('action', 'save_preferences');
+                formData.append('csrf_token', CSRF_TOKEN);
+                formData.append('theme', currentTheme);
+                formData.append('font_family', currentFontFamily);
+                formData.append('font_size', currentFontSize);
+
+                await fetch('api.php?action=save_preferences', {
+                    method: 'POST',
+                    headers: {
+                        'X-CSRF-Token': CSRF_TOKEN,
+                        'X-Requested-With': 'XMLHttpRequest'
+                    },
+                    body: formData
+                });
+
+                if (feedback) {
+                    feedback.classList.remove('hidden');
+                    setTimeout(() => {
+                        feedback.classList.add('hidden');
+                    }, 4000);
+                }
+            } catch (err) {
+                console.error('Erro ao salvar no servidor:', err);
+            } finally {
+                if (btn) {
+                    btn.disabled = false;
+                    btn.innerHTML = originalHtml;
+                }
+            }
+        }
 
         function openModal(id) {
             const el = document.getElementById(id);
