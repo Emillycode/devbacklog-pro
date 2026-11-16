@@ -920,7 +920,7 @@ function render_task_card_html(array $task, array $projetos, array $folder_color
 <?php else: ?>
 
     <!-- Top Header -->
-    <header class="h-14 border-b border-light-border dark:border-dark-border bg-light-panel dark:bg-dark-panel flex items-center justify-between px-3 sm:px-4 lg:px-6 sticky top-0 z-20 transition-colors">
+    <header class="h-14 border-b border-light-border dark:border-dark-border bg-light-panel dark:bg-dark-panel flex items-center justify-between px-3 sm:px-4 lg:px-6 sticky top-0 z-40 transition-colors">
         <div class="flex items-center gap-2 sm:gap-3">
             <button id="mobile-menu-btn" class="md:hidden p-2 rounded text-slate-600 dark:text-zinc-400 hover:bg-slate-200 dark:hover:bg-dark-card">
                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"></path></svg>
@@ -986,7 +986,7 @@ function render_task_card_html(array $task, array $projetos, array $folder_color
     <!-- PAINEL PRINCIPAL -->
     <div class="flex-1 flex overflow-hidden">
         <!-- Sidebar de Pastas -->
-        <aside id="sidebar" class="fixed inset-y-0 left-0 z-30 w-72 border-r border-light-border dark:border-dark-border bg-light-panel dark:bg-dark-panel transform -translate-x-full md:translate-x-0 md:static transition-transform duration-200 ease-in-out flex flex-col pt-14 md:pt-0">
+        <aside id="sidebar" class="fixed top-14 bottom-0 left-0 z-30 w-72 border-r border-light-border dark:border-dark-border bg-light-panel dark:bg-dark-panel transform -translate-x-full md:translate-x-0 md:static md:top-0 md:h-auto md:shrink-0 transition-transform duration-200 ease-in-out flex flex-col">
             <div class="p-4 border-b border-light-border dark:border-dark-border flex items-center justify-between">
                 <span class="text-xs font-semibold uppercase tracking-wider text-zinc-500">Pastas de Projetos</span>
                 <button onclick="openModal('modal-new-project')" class="text-xs px-2.5 py-1 rounded-lg border bg-blue-600 hover:bg-blue-500 text-white border-blue-600 flex items-center gap-1 transition-colors cursor-pointer">
@@ -1043,7 +1043,7 @@ function render_task_card_html(array $task, array $projetos, array $folder_color
             </div>
         </aside>
 
-        <div id="mobile-overlay" class="fixed inset-0 bg-black/50 backdrop-blur-xs z-20 hidden md:hidden" onclick="toggleMobileMenu()"></div>
+        <div id="mobile-overlay" class="fixed top-14 inset-x-0 bottom-0 bg-black/60 backdrop-blur-xs z-20 hidden md:hidden" onclick="toggleMobileMenu()"></div>
 
         <!-- Área Principal -->
         <main class="flex-1 flex flex-col overflow-y-auto">

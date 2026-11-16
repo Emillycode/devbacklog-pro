@@ -1470,7 +1470,7 @@ export default function App() {
       >
       {/* Top Header */}
       <header
-        className={`h-14 border-b flex items-center justify-between px-3 sm:px-4 lg:px-6 sticky top-0 z-20 transition-colors ${
+        className={`h-14 border-b flex items-center justify-between px-3 sm:px-4 lg:px-6 sticky top-0 z-40 transition-colors ${
           theme === 'dark'
             ? 'bg-[#121215] border-zinc-800'
             : 'bg-[#f4f6f8] border-[#d8dee4]'
@@ -1618,7 +1618,7 @@ export default function App() {
       <div className="flex-1 flex overflow-hidden">
         {/* Sidebar Lateral de Pastas */}
         <aside
-          className={`fixed inset-y-0 left-0 z-30 w-72 border-r transform md:translate-x-0 md:static transition-transform duration-200 ease-in-out flex flex-col pt-14 md:pt-0 ${
+          className={`fixed top-14 bottom-0 left-0 z-30 w-72 border-r transform md:translate-x-0 md:static md:top-0 md:h-auto md:shrink-0 transition-transform duration-200 ease-in-out flex flex-col ${
             sidebarOpen ? 'translate-x-0' : '-translate-x-full'
           } ${
             theme === 'dark'
@@ -1773,7 +1773,7 @@ export default function App() {
         {sidebarOpen && (
           <div
             onClick={() => setSidebarOpen(false)}
-            className="fixed inset-0 bg-black/60 z-20 md:hidden backdrop-blur-2xs"
+            className="fixed top-14 inset-x-0 bottom-0 bg-black/60 z-20 md:hidden backdrop-blur-2xs"
           />
         )}
 
