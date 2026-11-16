@@ -161,6 +161,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         $_SESSION['authenticated'] = true;
                         $_SESSION['admin_email'] = $email;
                         $_SESSION['supabase_access_token'] = $sb_auth['session']['access_token'] ?? '';
+                        $_SESSION['supabase_refresh_token'] = $sb_auth['session']['refresh_token'] ?? '';
+                        $_SESSION['supabase_token_expires_at'] = time() + (int)($sb_auth['session']['expires_in'] ?? 3600);
                         $_SESSION['supabase_user_id'] = $sb_auth['session']['user']['id'] ?? '';
                         $_SESSION['login_at'] = $now;
                         $auth_config['failed_attempts'] = 0;
@@ -180,6 +182,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $auth_config['failed_attempts'] = 0;
                     $auth_config['lockout_until'] = 0;
                     save_auth_config($AUTH_FILE, $auth_config);
+
+                    if ($supabase_active && isset($sb_auth) && !$sb_auth['ok']) {
+                        $_SESSION['sec_feedback'] = [
+                            'type' => 'err',
+                            'text' => 'Aviso: Login efetuado apenas localmente (.env). O Supabase recusou: ' . ($sb_auth['error'] ?? 'Erro desconhecido')
+                        ];
+                    }
+
                     header("Location: index.php");
                     exit;
                 } else {
@@ -236,7 +246,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     if (!empty($_SESSION['supabase_user_id'])) {
                         $sb_proj['user_id'] = $_SESSION['supabase_user_id'];
                     }
-                    supabase_request($ENV, 'POST', 'projetos', '', $sb_proj);
+                    $sb_res = supabase_request($ENV, 'POST', 'projetos', '', $sb_proj);
+                    if (!$sb_res['ok']) {
+                        $_SESSION['sec_feedback'] = [
+                            'type' => 'err',
+                            'text' => 'Aviso: Pasta criada localmente, mas não gravou no Supabase: ' . ($sb_res['error'] ?? 'Sem permissão no banco')
+                        ];
+                    }
                 }
                 $data['projetos'][] = $new_proj;
                 save_local_json($DATA_FILE, $data);
@@ -300,7 +316,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     if (!empty($_SESSION['supabase_user_id'])) {
                         $sb_task['user_id'] = $_SESSION['supabase_user_id'];
                     }
-                    supabase_request($ENV, 'POST', 'tarefas', '', $sb_task);
+                    $sb_res = supabase_request($ENV, 'POST', 'tarefas', '', $sb_task);
+                    if (!$sb_res['ok']) {
+                        $_SESSION['sec_feedback'] = [
+                            'type' => 'err',
+                            'text' => 'Aviso: Tarefa criada localmente, mas não gravou no Supabase: ' . ($sb_res['error'] ?? 'Sem permissão no banco')
+                        ];
+                    }
                 }
                 array_unshift($data['tarefas'], $new_task);
                 save_local_json($DATA_FILE, $data);

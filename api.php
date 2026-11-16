@@ -149,9 +149,52 @@ function is_supabase_configured(array $env): bool {
 }
 
 /**
- * Extrai o Bearer token (JWT do Supabase Auth) enviado pelo cliente React
+ * Localiza o arquivo de certificados raiz CA (evita erro SSL no Windows/Wamp)
+ */
+function get_system_ca_bundle(): ?string {
+    static $ca_path = null;
+    if ($ca_path !== null) {
+        return $ca_path !== '' ? $ca_path : null;
+    }
+
+    $ini_ca = ini_get('curl.cainfo') ?: ini_get('openssl.cafile');
+    if ($ini_ca && file_exists($ini_ca)) {
+        $ca_path = $ini_ca;
+        return $ca_path;
+    }
+
+    $candidates = [
+        'D:/Wampp/apps/phpmyadmin5.2.3/vendor/composer/ca-bundle/res/cacert.pem',
+        'C:/Wamp/apps/phpmyadmin5.2.3/vendor/composer/ca-bundle/res/cacert.pem',
+        'D:/Wampp/bin/php/cacert.pem',
+        'C:/Wampp/bin/php/cacert.pem',
+        __DIR__ . '/cacert.pem'
+    ];
+    foreach ($candidates as $cand) {
+        if (file_exists($cand)) {
+            $ca_path = $cand;
+            return $ca_path;
+        }
+    }
+    $ca_path = '';
+    return null;
+}
+
+/**
+ * Configura verificação SSL no handle cURL
+ */
+function configure_curl_ssl($ch): void {
+    $ca = get_system_ca_bundle();
+    if ($ca !== null) {
+        curl_setopt($ch, CURLOPT_CAINFO, $ca);
+    }
+}
+
+/**
+ * Extrai o Bearer token (JWT do Supabase Auth), com auto-renovação de sessão expirada
  */
 function get_bearer_token(): string {
+    global $ENV;
     $auth_header = $_SERVER['HTTP_AUTHORIZATION'] ?? ($_SERVER['REDIRECT_HTTP_AUTHORIZATION'] ?? '');
     if ($auth_header === '' && function_exists('getallheaders')) {
         $headers = getallheaders();
@@ -167,7 +210,27 @@ function get_bearer_token(): string {
     if (preg_match('/^Bearer\s+(.+)$/i', trim($auth_header), $matches)) {
         return trim($matches[1]);
     }
-    return (string)($_SESSION['supabase_access_token'] ?? '');
+
+    $session_token = (string)($_SESSION['supabase_access_token'] ?? '');
+    $refresh_token = (string)($_SESSION['supabase_refresh_token'] ?? '');
+    $expires_at = (int)($_SESSION['supabase_token_expires_at'] ?? 0);
+
+    // Auto-refresh se o token estiver expirado ou a 2 minutos de expirar
+    if ($refresh_token !== '' && !empty($ENV) && is_supabase_configured($ENV)) {
+        if ($session_token === '' || ($expires_at > 0 && time() >= ($expires_at - 120))) {
+            $ref = supabase_auth_refresh_token($ENV, $refresh_token);
+            if ($ref['ok']) {
+                $session_token = $ref['session']['access_token'] ?? $session_token;
+                $_SESSION['supabase_access_token'] = $session_token;
+                if (!empty($ref['session']['refresh_token'])) {
+                    $_SESSION['supabase_refresh_token'] = $ref['session']['refresh_token'];
+                }
+                $_SESSION['supabase_token_expires_at'] = time() + (int)($ref['session']['expires_in'] ?? 3600);
+            }
+        }
+    }
+
+    return $session_token;
 }
 
 /**
@@ -189,6 +252,7 @@ function verify_supabase_jwt(array $env, string $jwt): ?array {
     $url = $base_url . '/auth/v1/user';
 
     $ch = curl_init($url);
+    configure_curl_ssl($ch);
     curl_setopt($ch, CURLOPT_HTTPHEADER, [
         'apikey: ' . $api_key,
         'Authorization: Bearer ' . $jwt,
@@ -233,6 +297,7 @@ function supabase_auth_sign_in(array $env, string $email, string $password): arr
     $url = $base_url . '/auth/v1/token?grant_type=password';
 
     $ch = curl_init($url);
+    configure_curl_ssl($ch);
     curl_setopt($ch, CURLOPT_HTTPHEADER, [
         'apikey: ' . $api_key,
         'Content-Type: application/json',
@@ -262,7 +327,51 @@ function supabase_auth_sign_in(array $env, string $email, string $password): arr
     if ($err_desc === 'Invalid login credentials') {
         $err_desc = 'E-mail ou senha inválidos no Supabase.';
     }
+    if ($err_desc === 'Email logins are disabled') {
+        $err_desc = 'O provedor de e-mail está desativado no Supabase. Acesse o painel do Supabase -> Authentication -> Providers -> Email e ative a opção "Enable Email provider".';
+    }
     return ['ok' => false, 'error' => $err_desc];
+}
+
+/**
+ * Renova a sessão do Supabase Auth usando o refresh_token
+ */
+function supabase_auth_refresh_token(array $env, string $refresh_token): array {
+    if (!is_supabase_configured($env) || !function_exists('curl_init') || $refresh_token === '') {
+        return ['ok' => false, 'error' => 'Supabase não configurado ou refresh_token ausente.'];
+    }
+
+    $base_url = rtrim(trim($env['SUPABASE_URL']), '/');
+    $api_key = get_public_supabase_key($env) ?: trim($env['SUPABASE_KEY']);
+    $url = $base_url . '/auth/v1/token?grant_type=refresh_token';
+
+    $ch = curl_init($url);
+    configure_curl_ssl($ch);
+    curl_setopt($ch, CURLOPT_HTTPHEADER, [
+        'apikey: ' . $api_key,
+        'Content-Type: application/json',
+        'Accept: application/json'
+    ]);
+    curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode([
+        'refresh_token' => $refresh_token
+    ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 10);
+
+    $response = curl_exec($ch);
+    $status = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+
+    if ($response === false) {
+        return ['ok' => false, 'error' => 'Não foi possível conectar ao Supabase para renovar o token.'];
+    }
+
+    $decoded = json_decode($response, true);
+    if ($status >= 200 && $status < 300 && !empty($decoded['access_token'])) {
+        return ['ok' => true, 'session' => $decoded];
+    }
+
+    return ['ok' => false, 'error' => $decoded['message'] ?? 'Falha ao renovar token do Supabase.'];
 }
 
 /**
@@ -278,6 +387,7 @@ function supabase_auth_sign_up(array $env, string $email, string $password): arr
     $url = $base_url . '/auth/v1/signup';
 
     $ch = curl_init($url);
+    configure_curl_ssl($ch);
     curl_setopt($ch, CURLOPT_HTTPHEADER, [
         'apikey: ' . $api_key,
         'Content-Type: application/json',
@@ -330,6 +440,7 @@ function supabase_request(
     $url = $base_url . '/rest/v1/' . $table . ($query !== '' ? '?' . $query : '');
 
     $ch = curl_init($url);
+    configure_curl_ssl($ch);
     $headers = [
         'apikey: ' . $api_key,
         'Authorization: Bearer ' . $bearer,
@@ -874,6 +985,8 @@ if (basename($_SERVER['SCRIPT_FILENAME'] ?? '') === 'api.php') {
             if ($sb_auth['ok']) {
                 $auth_success = true;
                 $_SESSION['supabase_access_token'] = $sb_auth['session']['access_token'] ?? '';
+                $_SESSION['supabase_refresh_token'] = $sb_auth['session']['refresh_token'] ?? '';
+                $_SESSION['supabase_token_expires_at'] = time() + (int)($sb_auth['session']['expires_in'] ?? 3600);
                 $_SESSION['supabase_user_id'] = $sb_auth['session']['user']['id'] ?? '';
             }
         }
