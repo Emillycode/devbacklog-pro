@@ -40,6 +40,7 @@ function get_env_var(string $key): string {
 function load_env_config(string $env_file): array {
     $vars = [
         'ADMIN_EMAIL' => get_env_var('ADMIN_EMAIL'),
+        'ALLOWED_EMAILS' => get_env_var('ALLOWED_EMAILS'),
         'ADMIN_PASSWORD' => get_env_var('ADMIN_PASSWORD'),
         'ADMIN_PASSWORD_HASH' => get_env_var('ADMIN_PASSWORD_HASH'),
         'VITE_SUPABASE_URL' => get_env_var('VITE_SUPABASE_URL'),
@@ -965,19 +966,18 @@ if (basename($_SERVER['SCRIPT_FILENAME'] ?? '') === 'api.php') {
 
         $email = trim((string)$param('email', ''));
         $password = (string)$param('password', (string)$param('credential', ''));
-        $admin_email = trim($ENV['ADMIN_EMAIL'] ?? 'lima7emilly12@gmail.com');
+        $allowed_emails_raw = $ENV['ALLOWED_EMAILS'] ?? $ENV['ADMIN_EMAIL'] ?? 'lima7emilly12@gmail.com';
+        $allowed_emails = array_filter(array_map('trim', explode(',', $allowed_emails_raw)));
 
-        // Bloqueio rigoroso: Apenas o e-mail do proprietário pode acessar
-        if (mb_strtolower($email, 'UTF-8') !== mb_strtolower($admin_email, 'UTF-8')) {
+        // Bloqueio: Apenas os e-mails autorizados podem acessar
+        if (!in_array(mb_strtolower($email, 'UTF-8'), array_map('mb_strtolower', $allowed_emails), true)) {
             http_response_code(403);
             echo json_encode([
                 'ok' => false,
-                'error' => 'Acesso negado: Plataforma de uso exclusivo do administrador.'
+                'message' => 'Acesso restrito. E-mail não autorizado.'
             ]);
             exit;
         }
-
-        $auth_success = false;
 
         // 1. Tenta autenticar pelo Supabase Auth
         if ($supabase_active) {

@@ -145,11 +145,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         } else {
             $email = trim($_POST['email'] ?? '');
             $password = $_POST['password'] ?? '';
-            $admin_email = trim($ENV['ADMIN_EMAIL'] ?? 'lima7emilly12@gmail.com');
+            $allowed_emails_raw = $ENV['ALLOWED_EMAILS'] ?? $ENV['ADMIN_EMAIL'] ?? 'lima7emilly12@gmail.com';
+            $allowed_emails = array_filter(array_map('trim', explode(',', $allowed_emails_raw)));
 
-            // Bloqueio rigoroso: Apenas o e-mail do proprietário pode acessar
-            if (mb_strtolower($email, 'UTF-8') !== mb_strtolower($admin_email, 'UTF-8')) {
-                $login_error = 'Acesso restrito. Esta plataforma é de uso exclusivo do proprietário.';
+            // Bloqueio: Apenas os e-mails autorizados podem acessar
+            if (!in_array(mb_strtolower($email, 'UTF-8'), array_map('mb_strtolower', $allowed_emails), true)) {
+                $login_error = 'Acesso restrito. E-mail não autorizado.';
             } else {
                 $login_ok = false;
 
