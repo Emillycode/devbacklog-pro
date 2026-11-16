@@ -555,11 +555,11 @@ export default function App() {
     email: string,
     password: string
   ): Promise<{ ok: boolean; error?: string }> => {
-    const adminEmail = 'lima7emilly12@gmail.com';
-    if (email.trim().toLowerCase() !== adminEmail.toLowerCase()) {
+    const cleanEmail = email.trim();
+    if (!cleanEmail || !password) {
       return {
         ok: false,
-        error: 'Acesso negado: Plataforma de uso exclusivo do administrador.'
+        error: 'Por favor, informe e-mail e senha.'
       };
     }
 

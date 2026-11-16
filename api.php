@@ -997,6 +997,8 @@ if (basename($_SERVER['SCRIPT_FILENAME'] ?? '') === 'api.php') {
             exit;
         }
 
+        $auth_success = false;
+
         // 1. Tenta autenticar pelo Supabase Auth
         if ($supabase_active) {
             $sb_auth = supabase_auth_sign_in($ENV, $email, $password);
@@ -1047,7 +1049,7 @@ if (basename($_SERVER['SCRIPT_FILENAME'] ?? '') === 'api.php') {
         http_response_code(401);
         echo json_encode([
             'ok' => false,
-            'error' => 'Acesso negado: E-mail ou senha inválidos.'
+            'error' => !empty($sb_auth['error']) ? $sb_auth['error'] : 'Acesso negado: E-mail ou senha inválidos.'
         ]);
         exit;
     }
