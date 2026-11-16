@@ -145,11 +145,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         } else {
             $email = trim($_POST['email'] ?? '');
             $password = $_POST['password'] ?? '';
-            $allowed_emails_raw = $ENV['ALLOWED_EMAILS'] ?? $ENV['ADMIN_EMAIL'] ?? 'lima7emilly12@gmail.com';
-            $allowed_emails = array_filter(array_map('trim', explode(',', $allowed_emails_raw)));
+            $allowed_emails = parse_allowed_emails($ENV);
 
             // Bloqueio: Apenas os e-mails autorizados podem acessar
-            if (!in_array(mb_strtolower($email, 'UTF-8'), array_map('mb_strtolower', $allowed_emails), true)) {
+            if (!in_array(mb_strtolower($email, 'UTF-8'), $allowed_emails, true)) {
                 $login_error = 'Acesso restrito. E-mail não autorizado.';
             } else {
                 $login_ok = false;
@@ -200,7 +199,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         $auth_config['failed_attempts'] = 0;
                     }
                     save_auth_config($AUTH_FILE, $auth_config);
-                    $login_error = 'E-mail ou senha inválidos.';
+                    $login_error = !empty($sb_auth['error']) ? $sb_auth['error'] : 'E-mail ou senha inválidos.';
                 }
             }
         }

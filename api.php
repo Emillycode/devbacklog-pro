@@ -150,6 +150,30 @@ function is_supabase_configured(array $env): bool {
 }
 
 /**
+ * Extrai e normaliza a lista de e-mails autorizados a partir de ALLOWED_EMAILS e ADMIN_EMAIL
+ * Limpa espaços, aspas extras (comuns no painel do Render/Docker) e converte para minúsculas
+ */
+function parse_allowed_emails(array $env): array {
+    $raw = (string)($env['ALLOWED_EMAILS'] ?? $env['ADMIN_EMAIL'] ?? 'lima7emilly12@gmail.com');
+    $raw = trim($raw, " \t\n\r\0\x0B\"'");
+    $parts = explode(',', $raw);
+    $emails = [];
+    foreach ($parts as $p) {
+        $clean = mb_strtolower(trim($p, " \t\n\r\0\x0B\"'"), 'UTF-8');
+        if ($clean !== '') {
+            $emails[] = $clean;
+        }
+    }
+    if (!empty($env['ADMIN_EMAIL'])) {
+        $admin = mb_strtolower(trim((string)$env['ADMIN_EMAIL'], " \t\n\r\0\x0B\"'"), 'UTF-8');
+        if ($admin !== '' && !in_array($admin, $emails, true)) {
+            $emails[] = $admin;
+        }
+    }
+    return array_values(array_unique($emails));
+}
+
+/**
  * Localiza o arquivo de certificados raiz CA (evita erro SSL no Windows/Wamp)
  */
 function get_system_ca_bundle(): ?string {
@@ -576,20 +600,15 @@ function save_auth_config(string $auth_file, array $config): bool {
  * Valida E-mail e Senha estritamente contra o configurado no .env
  */
 function verify_admin_credentials(string $input_email, string $input_password, array $auth_config, array $env): bool {
-    $expected_email = trim($env['ADMIN_EMAIL'] ?? ($auth_config['email'] ?? 'admin@meusoftware.com'));
-    $input_email_clean = trim($input_email);
+    $allowed = parse_allowed_emails($env);
+    $input_email_clean = mb_strtolower(trim($input_email), 'UTF-8');
 
     if ($input_email_clean === '' || $input_password === '') {
         return false;
     }
 
-    // Comparação de e-mail em tempo constante (case-insensitive)
-    $email_matches = hash_equals(
-        mb_strtolower($expected_email, 'UTF-8'),
-        mb_strtolower($input_email_clean, 'UTF-8')
-    );
-
-    if (!$email_matches) {
+    // Permite login local se o e-mail estiver na lista de e-mails autorizados
+    if (!in_array($input_email_clean, $allowed, true)) {
         return false;
     }
 
@@ -966,11 +985,10 @@ if (basename($_SERVER['SCRIPT_FILENAME'] ?? '') === 'api.php') {
 
         $email = trim((string)$param('email', ''));
         $password = (string)$param('password', (string)$param('credential', ''));
-        $allowed_emails_raw = $ENV['ALLOWED_EMAILS'] ?? $ENV['ADMIN_EMAIL'] ?? 'lima7emilly12@gmail.com';
-        $allowed_emails = array_filter(array_map('trim', explode(',', $allowed_emails_raw)));
+        $allowed_emails = parse_allowed_emails($ENV);
 
         // Bloqueio: Apenas os e-mails autorizados podem acessar
-        if (!in_array(mb_strtolower($email, 'UTF-8'), array_map('mb_strtolower', $allowed_emails), true)) {
+        if (!in_array(mb_strtolower($email, 'UTF-8'), $allowed_emails, true)) {
             http_response_code(403);
             echo json_encode([
                 'ok' => false,
