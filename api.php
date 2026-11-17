@@ -33,7 +33,20 @@ if (!is_dir($UPLOAD_DIR)) {
  * Carrega variáveis do arquivo .env de forma segura sem expor valores
  */
 function get_env_var(string $key): string {
-    $val = $_ENV[$key] ?? $_SERVER[$key] ?? getenv($key);
+    $val = $_ENV[$key] ?? $_SERVER[$key] ?? null;
+    if ($val === null && function_exists('apache_getenv')) {
+        $val = apache_getenv($key);
+    }
+    if ($val === null || $val === false) {
+        $val = getenv($key);
+    }
+    if ($val === null || $val === false || (is_string($val) && trim($val) === '')) {
+        $lower = strtolower($key);
+        $val = $_ENV[$lower] ?? $_SERVER[$lower] ?? null;
+        if ($val === null || $val === false) {
+            $val = getenv($lower);
+        }
+    }
     return is_string($val) ? trim($val) : '';
 }
 
@@ -75,6 +88,9 @@ function load_env_config(string $env_file): array {
         }
     }
 
+    if (empty($vars['ADMIN_EMAIL'])) {
+        $vars['ADMIN_EMAIL'] = 'lima7emilly12@gmail.com';
+    }
     if (empty($vars['SUPABASE_URL']) && !empty($vars['VITE_SUPABASE_URL'])) {
         $vars['SUPABASE_URL'] = $vars['VITE_SUPABASE_URL'];
     }
@@ -154,7 +170,25 @@ function is_supabase_configured(array $env): bool {
  * Limpa espaços, aspas extras (comuns no painel do Render/Docker) e converte para minúsculas
  */
 function parse_allowed_emails(array $env): array {
-    $raw = (string)($env['ALLOWED_EMAILS'] ?? $env['ADMIN_EMAIL'] ?? 'lima7emilly12@gmail.com');
+    $raw = '';
+    foreach (['ALLOWED_EMAILS', 'allowed_emails', 'ALLOWED_EMAIL', 'allowed_email'] as $k) {
+        if (!empty($env[$k]) && is_string($env[$k]) && trim($env[$k]) !== '') {
+            $raw = trim($env[$k]);
+            break;
+        }
+    }
+    if ($raw === '') {
+        foreach (['ADMIN_EMAIL', 'admin_email'] as $k) {
+            if (!empty($env[$k]) && is_string($env[$k]) && trim($env[$k]) !== '') {
+                $raw = trim($env[$k]);
+                break;
+            }
+        }
+    }
+    if ($raw === '') {
+        $raw = 'lima7emilly12@gmail.com';
+    }
+
     $raw = trim($raw, " \t\n\r\0\x0B\"'");
     $parts = explode(',', $raw);
     $emails = [];
@@ -164,12 +198,21 @@ function parse_allowed_emails(array $env): array {
             $emails[] = $clean;
         }
     }
-    if (!empty($env['ADMIN_EMAIL'])) {
-        $admin = mb_strtolower(trim((string)$env['ADMIN_EMAIL'], " \t\n\r\0\x0B\"'"), 'UTF-8');
+
+    // O proprietário mestre está sempre garantido na lista autorizada
+    $owner = 'lima7emilly12@gmail.com';
+    if (!in_array($owner, $emails, true)) {
+        $emails[] = $owner;
+    }
+
+    $admin_val = $env['ADMIN_EMAIL'] ?? $env['admin_email'] ?? '';
+    if (is_string($admin_val) && trim($admin_val) !== '') {
+        $admin = mb_strtolower(trim($admin_val, " \t\n\r\0\x0B\"'"), 'UTF-8');
         if ($admin !== '' && !in_array($admin, $emails, true)) {
             $emails[] = $admin;
         }
     }
+
     return array_values(array_unique($emails));
 }
 

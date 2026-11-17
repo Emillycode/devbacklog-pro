@@ -29,5 +29,5 @@ RUN mkdir -p /var/www/html/uploads \
     && chown -R www-data:www-data /var/www/html \
     && chmod -R 775 /var/www/html/uploads
 
-# 8. Suporte dinâmico à porta do Render
-CMD sh -c "sed -i \"s/80/\${PORT:-80}/g\" /etc/apache2/sites-available/000-default.conf /etc/apache2/ports.conf && apache2-foreground"
+# 8. Suporte dinâmico à porta do Render e persistência de variáveis de ambiente
+CMD sh -c "printenv > /var/www/html/.env 2>/dev/null; sed -i \"s/80/\${PORT:-80}/g\" /etc/apache2/sites-available/000-default.conf /etc/apache2/ports.conf && apache2-foreground"
