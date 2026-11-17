@@ -16,11 +16,11 @@ export default defineConfig(() => {
       watch: process.env.DISABLE_HMR === 'true' ? null : {},
       proxy: {
         '/api.php': {
-          target: process.env.PHP_BACKEND_URL || 'http://localhost/novoapp',
+          target: process.env.PHP_BACKEND_URL || 'http://localhost/Backlog',
           changeOrigin: true,
         },
         '/uploads': {
-          target: process.env.PHP_BACKEND_URL || 'http://localhost/novoapp',
+          target: process.env.PHP_BACKEND_URL || 'http://localhost/Backlog',
           changeOrigin: true,
         },
       },

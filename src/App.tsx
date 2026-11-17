@@ -630,7 +630,7 @@ export default function App() {
       };
     }
 
-    const basePrefix = window.location.pathname.match(/^(\/novoapp)(?:\/.*)?$/i)?.[1] || '';
+    const basePrefix = window.location.pathname.match(/^(\/Backlog)(?:\/.*)?$/i)?.[1] || '';
     const redirectTo = `${window.location.origin}${basePrefix}/reset-password`;
 
     const { error } = await sb.auth.resetPasswordForEmail(email, { redirectTo });

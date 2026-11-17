@@ -46,8 +46,8 @@ export function useAppRouter() {
 
   const navigate = useCallback((to: AppRoutePath, replace = false) => {
     if (typeof window === 'undefined') return;
-    // Preserve base directory when running under WAMP subfolder (e.g., /novoapp)
-    const baseMatch = window.location.pathname.match(/^(\/novoapp)(?:\/.*)?$/i);
+    // Preserve base directory when running under WAMP subfolder (e.g., /Backlog)
+    const baseMatch = window.location.pathname.match(/^(\/Backlog)(?:\/.*)?$/i);
     const basePrefix = baseMatch ? baseMatch[1] : '';
     const targetUrl = to === '/' ? `${basePrefix}/` : `${basePrefix}${to}`;
 

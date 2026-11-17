@@ -157,12 +157,12 @@ SUPABASE_KEY="sua_chave_publishable_ou_anon"
 
 ### Opção 1: Servidor Apache / WAMP (PHP) — Interface Principal
 
-1. Coloque o projeto dentro do diretório web do seu servidor (ex.: `htdocs/novoapp` ou `www/novoapp`).
+1. Coloque o projeto dentro do diretório web do seu servidor (ex.: `htdocs/Backlog` ou `www/Backlog`).
 2. Crie o arquivo `.env` a partir do `.env.example`.
 3. Certifique-se de que as extensões `curl`, `fileinfo` e `openssl` estejam habilitadas no PHP e que a pasta `uploads/` tenha permissão de escrita.
 4. Acesse no navegador:
    ```text
-   http://localhost/novoapp/
+   http://localhost/Backlog/
    ```
 
 ### Opção 2: Modo Desenvolvimento SPA (Vite + React + Backend PHP)
