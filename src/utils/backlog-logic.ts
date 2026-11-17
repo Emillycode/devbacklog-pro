@@ -17,7 +17,7 @@ export interface Projeto {
 export interface AnexoMedia {
   nome_original: string;
   caminho: string;
-  tipo: 'imagem' | 'video' | 'outro';
+  tipo: 'imagem' | 'video' | 'pdf' | 'outro';
   tamanho_formatado?: string;
 }
 
@@ -65,10 +65,13 @@ export function getFontSizePx(size: FontSize): string {
   }
 }
 
-export function getMediaCategory(fileName: string): 'imagem' | 'video' | 'outro' {
+export function getMediaCategory(fileName: string): 'imagem' | 'video' | 'pdf' | 'outro' {
   const ext = fileName.split('.').pop()?.toLowerCase() || '';
   if (['jpg', 'jpeg', 'png', 'webp', 'gif', 'svg'].includes(ext)) {
     return 'imagem';
+  }
+  if (ext === 'pdf') {
+    return 'pdf';
   }
   if (['mp4', 'webm', 'mov', 'ogg'].includes(ext)) {
     return 'video';

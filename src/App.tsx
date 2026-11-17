@@ -32,7 +32,9 @@ import {
   Clock,
   ArrowLeft,
   Play,
-  RotateCcw
+  RotateCcw,
+  FileText,
+  ExternalLink
 } from 'lucide-react';
 import {
   type Projeto,
@@ -1296,23 +1298,75 @@ export default function App() {
                           : 'bg-[#eef2f6] border-[#d5dbe1]'
                       }`}
                     >
+                      {task.anexo.tipo === 'pdf' && (
+                        <div className="flex items-center justify-between p-2.5 rounded-lg border border-rose-200 dark:border-rose-900/50 bg-white dark:bg-zinc-900/80">
+                          <div className="flex items-center gap-2.5 min-w-0">
+                            <div className="w-8 h-8 rounded-lg bg-rose-100 dark:bg-rose-950/60 text-rose-600 dark:text-rose-400 flex items-center justify-center shrink-0">
+                              <FileText className="w-4 h-4" />
+                            </div>
+                            <div className="truncate text-xs">
+                              <p className="font-medium text-slate-800 dark:text-zinc-200 truncate">{task.anexo.nome_original}</p>
+                              <p className="text-[0.68rem] text-zinc-500 font-mono">{task.anexo.tamanho_formatado || 'PDF'} • Documento PDF</p>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-1.5 shrink-0 ml-2">
+                            <a
+                              href={task.anexo.caminho}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="px-2 py-1 text-[0.7rem] font-medium rounded-md bg-white dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 text-slate-700 dark:text-zinc-300 hover:bg-slate-50 dark:hover:bg-zinc-700 transition-colors inline-flex items-center gap-1 cursor-pointer"
+                            >
+                              <ExternalLink className="w-3 h-3 text-blue-500" />
+                              <span>Abrir</span>
+                            </a>
+                            <a
+                              href={task.anexo.caminho}
+                              download={task.anexo.nome_original}
+                              className="px-2 py-1 text-[0.7rem] font-medium rounded-md bg-rose-600 hover:bg-rose-500 text-white transition-colors inline-flex items-center gap-1 cursor-pointer"
+                            >
+                              <Download className="w-3 h-3" />
+                              <span>Baixar</span>
+                            </a>
+                          </div>
+                        </div>
+                      )}
+
                       {task.anexo.tipo === 'imagem' && (
                         <div className="space-y-1.5">
-                          <div className="relative inline-block">
+                          <div className="relative inline-block text-center w-full">
                             <img
                               src={task.anexo.caminho}
                               alt={task.anexo.nome_original}
-                              className="max-h-52 rounded-lg object-contain border border-zinc-300 dark:border-zinc-700 bg-black/5 dark:bg-black/40 cursor-pointer hover:opacity-95 transition-opacity"
+                              className="max-h-52 mx-auto rounded-lg object-contain border border-zinc-300 dark:border-zinc-700 bg-black/5 dark:bg-black/40 cursor-pointer hover:opacity-95 transition-opacity"
                               onClick={() => setPreviewMediaUrl(task.anexo!.caminho)}
                             />
-                            <button
-                              type="button"
-                              onClick={() => setPreviewMediaUrl(task.anexo!.caminho)}
-                              className="absolute bottom-2 right-2 p-1.5 rounded-md bg-black/75 hover:bg-black text-white text-xs flex items-center gap-1 cursor-pointer"
-                            >
-                              <ZoomIn className="w-3 h-3" />
-                              <span className="text-[0.7rem]">Ampliar</span>
-                            </button>
+                            <div className="mt-2 flex items-center justify-center gap-3 text-xs">
+                              <button
+                                type="button"
+                                onClick={() => setPreviewMediaUrl(task.anexo!.caminho)}
+                                className="text-blue-500 hover:underline inline-flex items-center gap-1 cursor-pointer"
+                              >
+                                <ZoomIn className="w-3.5 h-3.5" />
+                                <span>Ampliar</span>
+                              </button>
+                              <a
+                                href={task.anexo.caminho}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-slate-600 dark:text-zinc-400 hover:underline inline-flex items-center gap-1 cursor-pointer"
+                              >
+                                <ExternalLink className="w-3.5 h-3.5" />
+                                <span>Nova Guia</span>
+                              </a>
+                              <a
+                                href={task.anexo.caminho}
+                                download={task.anexo.nome_original}
+                                className="text-slate-600 dark:text-zinc-400 hover:underline inline-flex items-center gap-1 cursor-pointer"
+                              >
+                                <Download className="w-3.5 h-3.5" />
+                                <span>Baixar</span>
+                              </a>
+                            </div>
                           </div>
                         </div>
                       )}
@@ -2065,7 +2119,7 @@ export default function App() {
                         <input
                           type="file"
                           ref={fileInputRef}
-                          accept="image/*,video/*"
+                          accept="image/*,video/*,application/pdf,.pdf"
                           onChange={e => {
                             if (e.target.files && e.target.files[0]) {
                               setNewTaskFile(e.target.files[0]);
@@ -2940,12 +2994,25 @@ export default function App() {
                 {editingTask.anexo && !editTaskRemoveMedia ? (
                   <div className="flex items-center justify-between p-2 rounded-lg border border-zinc-700 bg-zinc-900/60">
                     <div className="flex items-center gap-2 truncate">
-                      {editingTask.anexo.tipo === 'imagem' ? (
-                        <ImageIcon className="w-4 h-4 text-blue-500" />
+                      {editingTask.anexo.tipo === 'pdf' ? (
+                        <FileText className="w-4 h-4 text-rose-500 shrink-0" />
+                      ) : editingTask.anexo.tipo === 'imagem' ? (
+                        <ImageIcon className="w-4 h-4 text-blue-500 shrink-0" />
                       ) : (
-                        <Video className="w-4 h-4 text-emerald-500" />
+                        <Video className="w-4 h-4 text-emerald-500 shrink-0" />
                       )}
                       <span className="truncate">{editingTask.anexo.nome_original}</span>
+                      {editingTask.anexo.caminho && (
+                        <a
+                          href={editingTask.anexo.caminho}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-xs text-blue-400 hover:underline flex items-center gap-0.5 ml-1"
+                        >
+                          <ExternalLink className="w-3 h-3" />
+                          <span>Ver</span>
+                        </a>
+                      )}
                     </div>
                     <button
                       type="button"
@@ -2963,7 +3030,7 @@ export default function App() {
                     <input
                       type="file"
                       ref={editFileInputRef}
-                      accept="image/*,video/*"
+                      accept="image/*,video/*,application/pdf,.pdf"
                       onChange={e => {
                         if (e.target.files && e.target.files[0]) {
                           const file = e.target.files[0];

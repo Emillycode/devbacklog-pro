@@ -959,7 +959,7 @@ function handle_secure_media_upload(array $file_post, string $upload_dir): ?arra
         return null;
     }
 
-    $allowed_extensions = ['jpg', 'jpeg', 'png', 'webp', 'gif', 'mp4', 'webm', 'mov'];
+    $allowed_extensions = ['jpg', 'jpeg', 'png', 'webp', 'gif', 'mp4', 'webm', 'mov', 'pdf'];
     $original_name = basename($file_post['name']);
     $ext = strtolower(pathinfo($original_name, PATHINFO_EXTENSION));
 
@@ -974,14 +974,14 @@ function handle_secure_media_upload(array $file_post, string $upload_dir): ?arra
 
         $allowed_mimes = [
             'image/jpeg', 'image/png', 'image/webp', 'image/gif',
-            'video/mp4', 'video/webm', 'video/quicktime'
+            'video/mp4', 'video/webm', 'video/quicktime', 'application/pdf'
         ];
         if ($mime && !in_array($mime, $allowed_mimes, true)) {
             return null;
         }
     }
 
-    $tipo = in_array($ext, ['mp4', 'webm', 'mov'], true) ? 'video' : 'imagem';
+    $tipo = ($ext === 'pdf') ? 'pdf' : (in_array($ext, ['mp4', 'webm', 'mov'], true) ? 'video' : 'imagem');
     $safe_name = 'media_' . bin2hex(random_bytes(8)) . '.' . $ext;
     $target_path = $upload_dir . '/' . $safe_name;
 

@@ -664,29 +664,81 @@ function render_task_card_html(array $task, array $projetos, array $folder_color
                         </p>
                     <?php endif; ?>
 
-                    <?php if (!empty($task['anexo'])): ?>
+                    <?php if (!empty($task['anexo']) && is_array($task['anexo'])): 
+                        $anexo_ext = strtolower(pathinfo($task['anexo']['nome_original'] ?? $task['anexo']['caminho'] ?? '', PATHINFO_EXTENSION));
+                        $is_pdf = (($task['anexo']['tipo'] ?? '') === 'pdf' || $anexo_ext === 'pdf');
+                        $is_video = (($task['anexo']['tipo'] ?? '') === 'video' || in_array($anexo_ext, ['mp4', 'webm', 'mov'], true));
+                        $is_img = (!$is_pdf && !$is_video);
+                    ?>
                         <div class="mt-2.5 pt-2 border-t border-slate-100 dark:border-zinc-800/80">
-                            <div class="flex flex-wrap items-center gap-2">
+                            <div class="flex flex-wrap items-center justify-between gap-2 mb-2">
+                                <div class="flex items-center gap-1.5 text-xs text-slate-700 dark:text-zinc-300">
+                                    <?php if ($is_pdf): ?>
+                                        <svg class="w-4 h-4 text-rose-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z"></path></svg>
+                                    <?php elseif ($is_video): ?>
+                                        <svg class="w-4 h-4 text-emerald-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"></path></svg>
+                                    <?php else: ?>
+                                        <svg class="w-4 h-4 text-blue-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"></path></svg>
+                                    <?php endif; ?>
+                                    <span class="font-medium truncate max-w-[10rem]"><?= h($task['anexo']['nome_original'] ?? 'Anexo') ?></span>
+                                    <span class="text-[0.68rem] text-zinc-500 font-mono">(<?= h($task['anexo']['tamanho_formatado'] ?? '') ?>)</span>
+                                </div>
                                 <button type="button"
                                         onclick="toggleTaskMedia('<?= h($task['id']) ?>')"
-                                        class="text-xs px-2.5 py-1 rounded-lg border font-medium bg-slate-100 hover:bg-slate-200 border-slate-300 text-slate-700 dark:bg-zinc-800 dark:hover:bg-zinc-700 dark:border-zinc-700 dark:text-zinc-300 flex items-center gap-1.5 cursor-pointer transition-colors">
-                                    <svg class="w-3.5 h-3.5 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"></path></svg>
-                                    <span id="btn-text-<?= h($task['id']) ?>">Anexo</span>
-                                    <span class="text-[0.7rem] opacity-75 font-mono truncate max-w-[7rem]">(<?= h($task['anexo']['nome_original']) ?>)</span>
+                                        class="text-[0.7rem] px-2 py-0.5 rounded border font-medium bg-slate-100 hover:bg-slate-200 border-slate-300 text-slate-600 dark:bg-zinc-800 dark:hover:bg-zinc-700 dark:border-zinc-700 dark:text-zinc-400 cursor-pointer transition-colors">
+                                    <span id="btn-text-<?= h($task['id']) ?>">Ocultar</span>
                                 </button>
-                                <span class="text-[0.7rem] text-zinc-500 font-mono"><?= h($task['anexo']['tamanho_formatado'] ?? '') ?></span>
                             </div>
 
-                            <div id="media-box-<?= h($task['id']) ?>" class="hidden mt-2 p-2 rounded-xl border border-slate-200 dark:border-zinc-800 bg-[#eef2f6] dark:bg-[#101012]">
-                                <?php if ($task['anexo']['tipo'] === 'imagem'): ?>
-                                    <div class="relative inline-block">
+                            <div id="media-box-<?= h($task['id']) ?>" class="p-2 rounded-xl border border-slate-200 dark:border-zinc-800 bg-[#eef2f6] dark:bg-[#101012]">
+                                <?php if ($is_pdf): ?>
+                                    <div class="flex items-center justify-between p-2.5 rounded-lg border border-rose-200 dark:border-rose-900/50 bg-white dark:bg-zinc-900/80">
+                                        <div class="flex items-center gap-2.5 min-w-0">
+                                            <div class="w-8 h-8 rounded-lg bg-rose-100 dark:bg-rose-950/60 text-rose-600 dark:text-rose-400 flex items-center justify-center shrink-0">
+                                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z"></path></svg>
+                                            </div>
+                                            <div class="truncate text-xs">
+                                                <p class="font-medium text-slate-800 dark:text-zinc-200 truncate"><?= h($task['anexo']['nome_original']) ?></p>
+                                                <p class="text-[0.68rem] text-zinc-500 font-mono"><?= h($task['anexo']['tamanho_formatado'] ?? 'PDF') ?> • Documento PDF</p>
+                                            </div>
+                                        </div>
+                                        <div class="flex items-center gap-1.5 shrink-0 ml-2">
+                                            <a href="<?= h($task['anexo']['caminho']) ?>" target="_blank" rel="noopener noreferrer"
+                                               class="px-2 py-1 text-[0.7rem] font-medium rounded-md bg-white dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 text-slate-700 dark:text-zinc-300 hover:bg-slate-50 dark:hover:bg-zinc-700 transition-colors inline-flex items-center gap-1 cursor-pointer">
+                                                <svg class="w-3 h-3 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"></path></svg>
+                                                <span>Abrir</span>
+                                            </a>
+                                            <a href="<?= h($task['anexo']['caminho']) ?>" download="<?= h($task['anexo']['nome_original']) ?>"
+                                               class="px-2 py-1 text-[0.7rem] font-medium rounded-md bg-rose-600 hover:bg-rose-500 text-white transition-colors inline-flex items-center gap-1 cursor-pointer">
+                                                <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
+                                                <span>Baixar</span>
+                                            </a>
+                                        </div>
+                                    </div>
+                                <?php elseif ($is_video): ?>
+                                    <video src="<?= h($task['anexo']['caminho']) ?>" controls playsinline class="w-full max-h-56 rounded-lg border border-slate-300 dark:border-zinc-700 bg-black"></video>
+                                <?php else: ?>
+                                    <div class="relative group/img text-center">
                                         <img src="<?= h($task['anexo']['caminho']) ?>"
                                              alt="<?= h($task['anexo']['nome_original']) ?>"
                                              onclick="openImageLightbox('<?= h($task['anexo']['caminho']) ?>')"
-                                             class="max-h-52 rounded-lg object-contain border border-slate-300 dark:border-zinc-700 bg-black/5 dark:bg-black/40 cursor-pointer hover:opacity-95 transition-opacity">
+                                             class="max-h-52 w-auto mx-auto rounded-lg object-contain border border-slate-300 dark:border-zinc-700 bg-black/5 dark:bg-black/40 cursor-pointer hover:opacity-95 transition-opacity"
+                                             loading="lazy">
+                                        <div class="mt-1 flex items-center justify-center gap-3 text-[0.7rem]">
+                                            <button type="button" onclick="openImageLightbox('<?= h($task['anexo']['caminho']) ?>')" class="text-blue-500 hover:underline inline-flex items-center gap-1 cursor-pointer">
+                                                <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0zM10 7v3m0 0v3m0-3h3m-3 0H7"></path></svg>
+                                                <span>Ampliar</span>
+                                            </button>
+                                            <a href="<?= h($task['anexo']['caminho']) ?>" target="_blank" rel="noopener noreferrer" class="text-slate-600 dark:text-zinc-400 hover:underline inline-flex items-center gap-1">
+                                                <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"></path></svg>
+                                                <span>Nova Guia</span>
+                                            </a>
+                                            <a href="<?= h($task['anexo']['caminho']) ?>" download="<?= h($task['anexo']['nome_original']) ?>" class="text-slate-600 dark:text-zinc-400 hover:underline inline-flex items-center gap-1">
+                                                <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
+                                                <span>Baixar</span>
+                                            </a>
+                                        </div>
                                     </div>
-                                <?php elseif ($task['anexo']['tipo'] === 'video'): ?>
-                                    <video src="<?= h($task['anexo']['caminho']) ?>" controls playsinline class="w-full max-h-56 rounded-lg border border-slate-300 dark:border-zinc-700 bg-black"></video>
                                 <?php endif; ?>
                             </div>
                         </div>
@@ -1160,9 +1212,9 @@ function render_task_card_html(array $task, array $projetos, array $folder_color
                                       class="w-full text-xs px-3 py-2 border rounded-lg bg-slate-50 dark:bg-dark-input border-slate-300 dark:border-dark-border text-slate-900 dark:text-zinc-100"></textarea>
 
                             <div>
-                                <label class="text-xs px-3 py-1.5 rounded-lg border inline-flex items-center gap-1.5 cursor-pointer bg-slate-50 dark:bg-dark-input border-slate-300 dark:border-dark-border text-slate-600 dark:text-zinc-400">
-                                    <span id="quick-file-label">📎 Anexar Foto ou Vídeo</span>
-                                    <input type="file" name="anexo" accept="image/*,video/*" class="hidden" onchange="document.getElementById('quick-file-label').textContent = this.files[0] ? this.files[0].name : '📎 Anexar Foto ou Vídeo'">
+                                <label class="text-xs px-3 py-1.5 rounded-lg border inline-flex items-center gap-1.5 cursor-pointer bg-slate-50 dark:bg-dark-input border-slate-300 dark:border-dark-border text-slate-600 dark:text-zinc-400 hover:bg-slate-100 dark:hover:bg-zinc-800 transition-colors">
+                                    <span id="quick-file-label">📎 Anexar Imagem, PDF ou Vídeo</span>
+                                    <input type="file" name="anexo" accept="image/*,video/*,application/pdf,.pdf" class="hidden" onchange="document.getElementById('quick-file-label').textContent = this.files[0] ? ('📎 ' + this.files[0].name) : '📎 Anexar Imagem, PDF ou Vídeo'">
                                 </label>
                             </div>
                         </div>
@@ -1505,13 +1557,16 @@ function render_task_card_html(array $task, array $projetos, array $folder_color
 
                 <div class="pt-2 border-t border-slate-200 dark:border-dark-borderSubtle">
                     <label class="block text-slate-600 dark:text-zinc-400 mb-1.5">Arquivo Anexado</label>
-                    <div id="edit-media-preview-container" class="flex items-center justify-between p-2 rounded-lg border border-slate-300 dark:border-zinc-700 mb-2 hidden">
-                        <span id="edit-media-preview-name" class="truncate text-xs"></span>
-                        <button type="button" onclick="document.getElementById('edit-task-remover-anexo').value='1'; document.getElementById('edit-media-preview-container').classList.add('hidden');" class="text-xs text-rose-500 hover:underline ml-2">Remover</button>
+                    <div id="edit-media-preview-container" class="flex items-center justify-between p-2 rounded-lg border border-slate-300 dark:border-zinc-700 mb-2 hidden bg-slate-50 dark:bg-zinc-900/60">
+                        <span id="edit-media-preview-name" class="truncate text-xs font-medium text-slate-800 dark:text-zinc-200"></span>
+                        <div class="flex items-center gap-2 shrink-0 ml-2">
+                            <a id="edit-media-preview-link" href="#" target="_blank" rel="noopener noreferrer" class="text-xs text-blue-500 hover:underline">Abrir</a>
+                            <button type="button" onclick="document.getElementById('edit-task-remover-anexo').value='1'; document.getElementById('edit-media-preview-container').classList.add('hidden');" class="text-xs text-rose-500 hover:underline cursor-pointer">Remover</button>
+                        </div>
                     </div>
-                    <label class="text-xs px-3 py-1.5 rounded-lg border border-slate-300 dark:border-zinc-700 bg-slate-100 dark:bg-zinc-800 inline-flex items-center gap-1.5 cursor-pointer">
-                        <span>📎 Substituir ou Adicionar Arquivo</span>
-                        <input type="file" name="anexo" accept="image/*,video/*" class="hidden">
+                    <label class="text-xs px-3 py-1.5 rounded-lg border border-slate-300 dark:border-zinc-700 bg-slate-100 dark:bg-zinc-800 inline-flex items-center gap-1.5 cursor-pointer hover:bg-slate-200 dark:hover:bg-zinc-700 transition-colors">
+                        <span id="edit-file-input-label">📎 Substituir ou Adicionar Arquivo (Imagem, PDF ou Vídeo)</span>
+                        <input type="file" name="anexo" accept="image/*,video/*,application/pdf,.pdf" class="hidden" onchange="if (this.files[0]) document.getElementById('edit-file-input-label').textContent = '📎 Novo: ' + this.files[0].name;">
                     </label>
                 </div>
 
@@ -1745,7 +1800,7 @@ function render_task_card_html(array $task, array $projetos, array $folder_color
             const btnText = document.getElementById('btn-text-' + taskId);
             if (mediaBox) {
                 const isHidden = mediaBox.classList.toggle('hidden');
-                if (btnText) btnText.textContent = isHidden ? 'Anexo' : 'Ocultar';
+                if (btnText) btnText.textContent = isHidden ? 'Exibir' : 'Ocultar';
             }
         }
 
@@ -1761,8 +1816,14 @@ function render_task_card_html(array $task, array $projetos, array $folder_color
 
             const mediaPreview = document.getElementById('edit-media-preview-container');
             const mediaName = document.getElementById('edit-media-preview-name');
+            const mediaLink = document.getElementById('edit-media-preview-link');
+            const fileInputLabel = document.getElementById('edit-file-input-label');
+            if (fileInputLabel) fileInputLabel.textContent = '📎 Substituir ou Adicionar Arquivo (Imagem, PDF ou Vídeo)';
             if (task.anexo && task.anexo.nome_original) {
-                mediaName.textContent = task.anexo.nome_original;
+                mediaName.textContent = task.anexo.nome_original + (task.anexo.tamanho_formatado ? ' (' + task.anexo.tamanho_formatado + ')' : '');
+                if (mediaLink) {
+                    mediaLink.href = task.anexo.caminho || '#';
+                }
                 mediaPreview.classList.remove('hidden');
             } else {
                 mediaPreview.classList.add('hidden');
