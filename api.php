@@ -672,6 +672,66 @@ function verify_admin_credentials(string $input_email, string $input_password, a
 /**
  * Obtém o usuário autenticado via Supabase Auth JWT ou Sessão PHP
  */
+/**
+ * Encerra completamente a sessão do usuário (logout real)
+ * - Revoga o token no Supabase Auth (best-effort)
+ * - Remove tokens de acesso/refresh, user_id e flags da sessão PHP
+ * - Destrói a sessão e expira o cookie PHPSESSID
+ */
+function destroy_user_session(array $env): void {
+    $access_token = (string)($_SESSION['supabase_access_token'] ?? '');
+
+    // 1. Revoga a sessão no Supabase para invalidar o refresh_token
+    if ($access_token !== '' && is_supabase_configured($env) && function_exists('curl_init')) {
+        $base_url = rtrim(trim($env['SUPABASE_URL']), '/');
+        $api_key = get_public_supabase_key($env) ?: trim($env['SUPABASE_KEY']);
+        $ch = curl_init($base_url . '/auth/v1/logout');
+        configure_curl_ssl($ch);
+        curl_setopt($ch, CURLOPT_POST, true);
+        curl_setopt($ch, CURLOPT_POSTFIELDS, '{}');
+        curl_setopt($ch, CURLOPT_HTTPHEADER, [
+            'apikey: ' . $api_key,
+            'Authorization: Bearer ' . $access_token,
+            'Content-Type: application/json'
+        ]);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_TIMEOUT, 5);
+        curl_exec($ch);
+        curl_close($ch);
+    }
+
+    // 2. Preserva apenas as preferências visuais
+    $keep = [];
+    foreach (['app_theme', 'app_font_size', 'app_font_family'] as $k) {
+        if (isset($_SESSION[$k])) {
+            $keep[$k] = $_SESSION[$k];
+        }
+    }
+
+    // 3. Limpa e destrói a sessão atual
+    $_SESSION = [];
+    if (ini_get('session.use_cookies')) {
+        $p = session_get_cookie_params();
+        setcookie(session_name(), '', [
+            'expires' => time() - 42000,
+            'path' => $p['path'],
+            'domain' => $p['domain'],
+            'secure' => $p['secure'],
+            'httponly' => $p['httponly'],
+            'samesite' => $p['samesite'] ?? 'Lax'
+        ]);
+    }
+    session_destroy();
+
+    // 4. Inicia uma sessão nova e limpa (com as preferências visuais)
+    session_start();
+    session_regenerate_id(true);
+    foreach ($keep as $k => $v) {
+        $_SESSION[$k] = $v;
+    }
+    $_SESSION['authenticated'] = false;
+}
+
 function get_authenticated_user(array $auth_config, array $env): ?array {
     $jwt = get_bearer_token();
     if ($jwt !== '') {
@@ -1099,9 +1159,7 @@ if (basename($_SERVER['SCRIPT_FILENAME'] ?? '') === 'api.php') {
 
     // 3. Logout / Trancar Sessão
     if ($method === 'POST' && $action === 'logout') {
-        $_SESSION['authenticated'] = false;
-        unset($_SESSION['admin_email']);
-        session_regenerate_id(true);
+        destroy_user_session($ENV);
         echo json_encode([
             'ok' => true,
             'authenticated' => false,

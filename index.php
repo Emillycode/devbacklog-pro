@@ -207,9 +207,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     // Trancar / Logout
     if ($action === 'logout') {
-        $_SESSION['authenticated'] = false;
-        unset($_SESSION['admin_email']);
-        session_regenerate_id(true);
+        destroy_user_session($ENV);
         header("Location: index.php");
         exit;
     }
