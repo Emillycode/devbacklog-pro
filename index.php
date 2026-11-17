@@ -874,6 +874,8 @@ function render_task_card_html(array $task, array $projetos, array $folder_color
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Backlog</title>
+    <link rel="icon" type="image/jpeg" href="assets/icon.jpeg?v=2">
+    <link rel="apple-touch-icon" href="assets/icon.jpeg?v=2">
     <meta name="description" content="Backlog — Gerenciamento de projetos e ideias.">
     <meta property="og:title" content="Backlog">
     <meta property="og:description" content="Backlog — Gerenciamento de projetos e ideias.">
