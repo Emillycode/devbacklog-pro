@@ -67,13 +67,13 @@ export function getFontSizePx(size: FontSize): string {
 
 export function getMediaCategory(fileName: string): 'imagem' | 'video' | 'pdf' | 'outro' {
   const ext = fileName.split('.').pop()?.toLowerCase() || '';
-  if (['jpg', 'jpeg', 'png', 'webp', 'gif', 'svg'].includes(ext)) {
+  if (['jpg', 'jpeg', 'jfif', 'png', 'webp', 'gif', 'bmp', 'avif', 'heic', 'svg'].includes(ext)) {
     return 'imagem';
   }
   if (ext === 'pdf') {
     return 'pdf';
   }
-  if (['mp4', 'webm', 'mov', 'ogg'].includes(ext)) {
+  if (['mp4', 'webm', 'mov', 'm4v', 'ogg'].includes(ext)) {
     return 'video';
   }
   return 'outro';

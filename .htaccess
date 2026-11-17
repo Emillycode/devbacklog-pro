@@ -4,8 +4,8 @@ DirectoryIndex index.php index.html
 # Desabilitar listagem de diretórios
 Options -Indexes
 
-# Bloquear acesso HTTP direto a arquivos sensíveis (.env, .git, JSONs, SQL, Docker e configs)
-<FilesMatch "^(\.env.*|\.git.*|\.dockerignore|Dockerfile|render\.yaml|data\.json|auth_config\.json|test_data\.json|package\.json|package-lock\.json|tsconfig\.json|vite\.config\.ts|.*\.sql)$">
+# Bloquear acesso HTTP direto a arquivos sensíveis (.env, .git, .user.ini, JSONs, SQL, Docker e configs)
+<FilesMatch "^(\.env.*|\.git.*|\.user\.ini|\.dockerignore|Dockerfile|render\.yaml|data\.json|auth_config\.json|test_data\.json|package\.json|package-lock\.json|tsconfig\.json|vite\.config\.ts|.*\.sql)$">
     <IfModule mod_authz_core.c>
         Require all denied
     </IfModule>
@@ -14,6 +14,20 @@ Options -Indexes
         Deny from all
     </IfModule>
 </FilesMatch>
+
+# Aumentar limites de upload de mídia no WAMP/Apache (Render já configura via uploads.ini)
+<IfModule mod_php.c>
+    php_value upload_max_filesize 64M
+    php_value post_max_size 64M
+    php_value memory_limit 256M
+    php_value max_execution_time 120
+</IfModule>
+<IfModule mod_php8.c>
+    php_value upload_max_filesize 64M
+    php_value post_max_size 64M
+    php_value memory_limit 256M
+    php_value max_execution_time 120
+</IfModule>
 
 # Cabeçalhos adicionais de segurança HTTP
 <IfModule mod_headers.c>

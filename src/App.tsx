@@ -2119,7 +2119,7 @@ export default function App() {
                         <input
                           type="file"
                           ref={fileInputRef}
-                          accept="image/*,video/*,application/pdf,.pdf"
+                          accept="image/*,video/*,application/pdf,.pdf,.jfif,.bmp,.heic,.avif"
                           onChange={e => {
                             if (e.target.files && e.target.files[0]) {
                               setNewTaskFile(e.target.files[0]);
@@ -3030,7 +3030,7 @@ export default function App() {
                     <input
                       type="file"
                       ref={editFileInputRef}
-                      accept="image/*,video/*,application/pdf,.pdf"
+                      accept="image/*,video/*,application/pdf,.pdf,.jfif,.bmp,.heic,.avif"
                       onChange={e => {
                         if (e.target.files && e.target.files[0]) {
                           const file = e.target.files[0];

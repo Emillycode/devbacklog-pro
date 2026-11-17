@@ -126,12 +126,24 @@ function get_due_status(?string $date_str, string $task_status): array {
 $login_error = '';
 $sec_feedback = $_SESSION['sec_feedback'] ?? null;
 unset($_SESSION['sec_feedback']);
+$ui_feedback = $_SESSION['ui_feedback'] ?? null;
+unset($_SESSION['ui_feedback']);
 $supabase_active = is_supabase_configured($ENV);
 
 // ==========================================
 // CONTROLLER: PROCESSAMENTO DE FORMULÁRIOS
 // ==========================================
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    // Detecta estouro de post_max_size (quando o PHP descarta $_POST e $_FILES por arquivo gigante)
+    if (empty($_POST) && empty($_FILES) && (int)($_SERVER['CONTENT_LENGTH'] ?? 0) > 0) {
+        $_SESSION['ui_feedback'] = [
+            'type' => 'err',
+            'text' => 'O arquivo enviado ultrapassou o limite máximo aceito pelo servidor (' . ini_get('post_max_size') . '). Tente um arquivo menor.'
+        ];
+        header("Location: index.php");
+        exit;
+    }
+
     $action = $_POST['action'] ?? '';
     $redirect_project = $_POST['current_project'] ?? 'all';
     $redirect_filter = $_POST['current_filter'] ?? 'all';
@@ -184,9 +196,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     save_auth_config($AUTH_FILE, $auth_config);
 
                     if ($supabase_active && isset($sb_auth) && !$sb_auth['ok']) {
-                        $_SESSION['sec_feedback'] = [
+                        $_SESSION['ui_feedback'] = [
                             'type' => 'err',
-                            'text' => 'Aviso: Login efetuado apenas localmente (.env). O Supabase recusou: ' . ($sb_auth['error'] ?? 'Erro desconhecido')
+                            'text' => 'Login efetuado apenas localmente (.env). Sem token do Supabase, alterações não serão gravadas no banco em nuvem: ' . ($sb_auth['error'] ?? 'Erro desconhecido')
                         ];
                     }
 
@@ -246,9 +258,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     }
                     $sb_res = supabase_request($ENV, 'POST', 'projetos', '', $sb_proj);
                     if (!$sb_res['ok']) {
-                        $_SESSION['sec_feedback'] = [
+                        $_SESSION['ui_feedback'] = [
                             'type' => 'err',
-                            'text' => 'Aviso: Pasta criada localmente, mas não gravou no Supabase: ' . ($sb_res['error'] ?? 'Sem permissão no banco')
+                            'text' => 'Pasta criada localmente, mas não gravou no Supabase: ' . ($sb_res['error'] ?? 'Sem permissão no banco')
                         ];
                     }
                 }
@@ -292,11 +304,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
 
             $anexo = null;
+            $upload_err = null;
             if (isset($_FILES['anexo'])) {
-                $anexo = handle_secure_media_upload($_FILES['anexo'], $UPLOAD_DIR);
+                $anexo = handle_secure_media_upload($_FILES['anexo'], $UPLOAD_DIR, $upload_err);
             }
 
-            if ($titulo !== '') {
+            if ($upload_err !== null) {
+                $_SESSION['ui_feedback'] = [
+                    'type' => 'err',
+                    'text' => 'Falha ao anexar arquivo: ' . $upload_err
+                ];
+            } elseif ($titulo !== '') {
                 $new_task = [
                     'id' => 'task_' . bin2hex(random_bytes(5)),
                     'id_projeto' => $id_projeto,
@@ -308,19 +326,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     'criado_em' => date('Y-m-d H:i:s'),
                     'anexo' => $anexo
                 ];
+                $sb_err = null;
                 if ($supabase_active) {
                     $sb_task = $new_task;
                     $sb_task['data_limite'] = $data_limite !== '' ? $data_limite : null;
                     if (!empty($_SESSION['supabase_user_id'])) {
                         $sb_task['user_id'] = $_SESSION['supabase_user_id'];
                     }
-                    $sb_res = supabase_request($ENV, 'POST', 'tarefas', '', $sb_task);
-                    if (!$sb_res['ok']) {
-                        $_SESSION['sec_feedback'] = [
+                    $sb_ok = save_task_to_supabase_with_fallback($ENV, 'POST', '', $sb_task, $sb_err);
+                    if (!$sb_ok || $sb_err !== null) {
+                        $_SESSION['ui_feedback'] = [
                             'type' => 'err',
-                            'text' => 'Aviso: Tarefa criada localmente, mas não gravou no Supabase: ' . ($sb_res['error'] ?? 'Sem permissão no banco')
+                            'text' => 'Tarefa salva localmente, mas o banco Supabase retornou: ' . ($sb_err ?? 'Sem permissão no banco')
                         ];
                     }
+                }
+                if ($anexo !== null && $sb_err === null) {
+                    $_SESSION['ui_feedback'] = [
+                        'type' => 'ok',
+                        'text' => 'Item criado e anexo "' . $anexo['nome_original'] . '" salvo com sucesso!'
+                    ];
                 }
                 array_unshift($data['tarefas'], $new_task);
                 save_local_json($DATA_FILE, $data);
@@ -367,41 +392,70 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
 
             if ($task_id !== '' && $titulo !== '') {
-                foreach ($data['tarefas'] as &$task) {
-                    if ($task['id'] === $task_id) {
-                        $task['titulo'] = $titulo;
-                        $task['descricao_detalhada'] = $descricao_detalhada;
-                        $task['prioridade'] = $prioridade;
-                        $task['status'] = $status;
-                        $task['data_limite'] = $data_limite;
-                        if ($id_projeto !== '') {
-                            $task['id_projeto'] = $id_projeto;
-                        }
-                        if ($remover_anexo) {
-                            $task['anexo'] = null;
-                        }
-                        if (isset($_FILES['anexo']) && $_FILES['anexo']['error'] === UPLOAD_ERR_OK) {
-                            $novo_anexo = handle_secure_media_upload($_FILES['anexo'], $UPLOAD_DIR);
+                $upload_err = null;
+                $novo_anexo = null;
+                if (isset($_FILES['anexo'])) {
+                    $novo_anexo = handle_secure_media_upload($_FILES['anexo'], $UPLOAD_DIR, $upload_err);
+                }
+
+                if ($upload_err !== null) {
+                    $_SESSION['ui_feedback'] = [
+                        'type' => 'err',
+                        'text' => 'Falha ao anexar arquivo: ' . $upload_err
+                    ];
+                } else {
+                    foreach ($data['tarefas'] as &$task) {
+                        if ($task['id'] === $task_id) {
+                            $task['titulo'] = $titulo;
+                            $task['descricao_detalhada'] = $descricao_detalhada;
+                            $task['prioridade'] = $prioridade;
+                            $task['status'] = $status;
+                            $task['data_limite'] = $data_limite;
+                            if ($id_projeto !== '') {
+                                $task['id_projeto'] = $id_projeto;
+                            }
                             if ($novo_anexo) {
                                 $task['anexo'] = $novo_anexo;
+                            } elseif ($remover_anexo) {
+                                $task['anexo'] = null;
                             }
+
+                            $sb_err = null;
+                            if ($supabase_active) {
+                                $sb_ok = save_task_to_supabase_with_fallback(
+                                    $ENV,
+                                    'PATCH',
+                                    'id=eq.' . rawurlencode($task_id),
+                                    [
+                                        'id_projeto' => $task['id_projeto'],
+                                        'titulo' => $task['titulo'],
+                                        'descricao_detalhada' => $task['descricao_detalhada'],
+                                        'prioridade' => $task['prioridade'],
+                                        'status' => $task['status'],
+                                        'data_limite' => $task['data_limite'] !== '' ? $task['data_limite'] : null,
+                                        'anexo' => $task['anexo']
+                                    ],
+                                    $sb_err
+                                );
+                                if (!$sb_ok || $sb_err !== null) {
+                                    $_SESSION['ui_feedback'] = [
+                                        'type' => 'err',
+                                        'text' => 'Alterações salvas localmente, mas o banco Supabase retornou: ' . ($sb_err ?? 'Sem permissão no banco')
+                                    ];
+                                }
+                            }
+                            if ($novo_anexo !== null && $sb_err === null) {
+                                $_SESSION['ui_feedback'] = [
+                                    'type' => 'ok',
+                                    'text' => 'Anexo "' . $novo_anexo['nome_original'] . '" salvo com sucesso!'
+                                ];
+                            }
+                            break;
                         }
-                        if ($supabase_active) {
-                            supabase_request($ENV, 'PATCH', 'tarefas', 'id=eq.' . rawurlencode($task_id), [
-                                'id_projeto' => $task['id_projeto'],
-                                'titulo' => $task['titulo'],
-                                'descricao_detalhada' => $task['descricao_detalhada'],
-                                'prioridade' => $task['prioridade'],
-                                'status' => $task['status'],
-                                'data_limite' => $task['data_limite'] !== '' ? $task['data_limite'] : null,
-                                'anexo' => $task['anexo']
-                            ]);
-                        }
-                        break;
                     }
+                    unset($task);
+                    save_local_json($DATA_FILE, $data);
                 }
-                unset($task);
-                save_local_json($DATA_FILE, $data);
             }
         }
 
@@ -782,9 +836,15 @@ function render_task_card_html(array $task, array $projetos, array $folder_color
             </div>
 
             <!-- Botões Editar e Excluir -->
+            <?php
+                $ui_task_payload = $task;
+                if (isset($ui_task_payload['anexo']) && is_array($ui_task_payload['anexo'])) {
+                    $ui_task_payload['anexo'] = sanitize_anexo_for_ui($ui_task_payload['anexo']);
+                }
+            ?>
             <div class="flex items-center gap-0.5 shrink-0">
                 <button type="button"
-                        onclick='openEditTaskModal(<?= json_encode($task, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP) ?>)'
+                        onclick='openEditTaskModal(<?= json_encode($ui_task_payload, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP) ?>)'
                         class="p-1.5 rounded-md text-slate-500 hover:text-slate-900 hover:bg-slate-200 dark:text-zinc-400 dark:hover:text-zinc-200 dark:hover:bg-zinc-800 transition-colors cursor-pointer"
                         title="Editar item">
                     <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path></svg>
@@ -1121,6 +1181,17 @@ function render_task_card_html(array $task, array $projetos, array $folder_color
                     <?php endif; ?>
                 </div>
 
+                <?php if ($ui_feedback): ?>
+                    <div id="ui-feedback-banner" class="p-3 rounded-xl border text-xs flex items-center justify-between gap-2 <?= ($ui_feedback['type'] ?? '') === 'ok' ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-700 dark:text-emerald-300' : 'bg-rose-500/10 border-rose-500/30 text-rose-600 dark:text-rose-300' ?>">
+                        <span class="font-medium"><?= h($ui_feedback['text'] ?? '') ?></span>
+                        <button type="button" onclick="document.getElementById('ui-feedback-banner').remove()" class="opacity-70 hover:opacity-100 px-1.5 cursor-pointer">✕</button>
+                    </div>
+                <?php elseif ($supabase_active && empty($_SESSION['supabase_access_token'])): ?>
+                    <div class="p-2.5 rounded-xl border text-xs bg-amber-500/10 border-amber-500/30 text-amber-700 dark:text-amber-300 flex items-center justify-between gap-2">
+                        <span>Sessão atual operando apenas no cache local (.env) sem token ativo do Supabase — cadastre este e-mail/senha no Supabase Auth caso queira sincronização em nuvem.</span>
+                    </div>
+                <?php endif; ?>
+
                 <!-- KPIs Visuais -->
                 <div class="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
                     <div class="p-3 rounded-xl border bg-white dark:bg-dark-card border-slate-200 dark:border-dark-border flex items-center justify-between">
@@ -1211,11 +1282,12 @@ function render_task_card_html(array $task, array $projetos, array $folder_color
                             <textarea name="descricao_detalhada" rows="2" placeholder="Descrição detalhada, checklist ou especificações (opcional)..."
                                       class="w-full text-xs px-3 py-2 border rounded-lg bg-slate-50 dark:bg-dark-input border-slate-300 dark:border-dark-border text-slate-900 dark:text-zinc-100"></textarea>
 
-                            <div>
+                            <div class="flex flex-wrap items-center gap-2">
                                 <label class="text-xs px-3 py-1.5 rounded-lg border inline-flex items-center gap-1.5 cursor-pointer bg-slate-50 dark:bg-dark-input border-slate-300 dark:border-dark-border text-slate-600 dark:text-zinc-400 hover:bg-slate-100 dark:hover:bg-zinc-800 transition-colors">
                                     <span id="quick-file-label">📎 Anexar Imagem, PDF ou Vídeo</span>
-                                    <input type="file" name="anexo" accept="image/*,video/*,application/pdf,.pdf" class="hidden" onchange="document.getElementById('quick-file-label').textContent = this.files[0] ? ('📎 ' + this.files[0].name) : '📎 Anexar Imagem, PDF ou Vídeo'">
+                                    <input type="file" id="quick-file-input" name="anexo" accept="image/*,video/*,application/pdf,.pdf,.jfif,.bmp,.heic,.avif" class="hidden" onchange="updateQuickFileLabel(this)">
                                 </label>
+                                <button type="button" id="quick-file-clear-btn" onclick="clearQuickFileInput()" class="hidden text-xs px-2 py-1 rounded-lg border border-rose-300/60 dark:border-rose-800/60 text-rose-500 hover:bg-rose-500/10 cursor-pointer">Limpar anexo</button>
                             </div>
                         </div>
                     </form>
@@ -1497,10 +1569,10 @@ function render_task_card_html(array $task, array $projetos, array $folder_color
 
     <!-- MODAL DE EDIÇÃO DE TAREFA -->
     <div id="modal-edit-task" class="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 hidden">
-        <div class="w-full max-w-lg rounded-2xl border bg-white dark:bg-dark-panel border-light-border dark:border-dark-border p-5 shadow-2xl">
+        <div class="w-full max-w-lg max-h-[90vh] overflow-y-auto rounded-2xl border bg-white dark:bg-dark-panel border-light-border dark:border-dark-border p-5 shadow-2xl">
             <div class="flex items-center justify-between pb-3 border-b border-slate-200 dark:border-dark-borderSubtle mb-4">
                 <h3 class="font-semibold text-sm">Editar Item</h3>
-                <button onclick="closeModal('modal-edit-task')" class="text-zinc-400">✕</button>
+                <button type="button" onclick="closeModal('modal-edit-task')" class="text-zinc-400 hover:text-zinc-200 cursor-pointer">✕</button>
             </div>
 
             <form method="POST" action="index.php" enctype="multipart/form-data" class="space-y-3.5 text-xs">
@@ -1564,10 +1636,13 @@ function render_task_card_html(array $task, array $projetos, array $folder_color
                             <button type="button" onclick="document.getElementById('edit-task-remover-anexo').value='1'; document.getElementById('edit-media-preview-container').classList.add('hidden');" class="text-xs text-rose-500 hover:underline cursor-pointer">Remover</button>
                         </div>
                     </div>
-                    <label class="text-xs px-3 py-1.5 rounded-lg border border-slate-300 dark:border-zinc-700 bg-slate-100 dark:bg-zinc-800 inline-flex items-center gap-1.5 cursor-pointer hover:bg-slate-200 dark:hover:bg-zinc-700 transition-colors">
-                        <span id="edit-file-input-label">📎 Substituir ou Adicionar Arquivo (Imagem, PDF ou Vídeo)</span>
-                        <input type="file" name="anexo" accept="image/*,video/*,application/pdf,.pdf" class="hidden" onchange="if (this.files[0]) document.getElementById('edit-file-input-label').textContent = '📎 Novo: ' + this.files[0].name;">
-                    </label>
+                    <div class="flex flex-wrap items-center gap-2">
+                        <label class="text-xs px-3 py-1.5 rounded-lg border border-slate-300 dark:border-zinc-700 bg-slate-100 dark:bg-zinc-800 inline-flex items-center gap-1.5 cursor-pointer hover:bg-slate-200 dark:hover:bg-zinc-700 transition-colors">
+                            <span id="edit-file-input-label">📎 Substituir ou Adicionar Arquivo (Imagem, PDF ou Vídeo)</span>
+                            <input type="file" id="edit-task-file-input" name="anexo" accept="image/*,video/*,application/pdf,.pdf,.jfif,.bmp,.heic,.avif" class="hidden" onchange="updateEditFileLabel(this)">
+                        </label>
+                        <button type="button" id="edit-file-clear-btn" onclick="clearEditFileInput()" class="hidden text-xs px-2 py-1 rounded-lg border border-rose-300/60 dark:border-rose-800/60 text-rose-500 hover:bg-rose-500/10 cursor-pointer">Limpar seleção</button>
+                    </div>
                 </div>
 
                 <div class="flex items-center justify-end gap-2 pt-2">
@@ -1804,6 +1879,44 @@ function render_task_card_html(array $task, array $projetos, array $folder_color
             }
         }
 
+        function updateFileInputFeedback(inputEl, labelId, clearBtnId, defaultText, prefix) {
+            const labelEl = document.getElementById(labelId);
+            const clearBtn = document.getElementById(clearBtnId);
+            const file = inputEl && inputEl.files ? inputEl.files[0] : null;
+            if (file) {
+                const sizeMb = file.size >= 1048576 ? (file.size / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(file.size / 1024)) + ' KB';
+                if (labelEl) labelEl.textContent = prefix + file.name + ' (' + sizeMb + ')';
+                if (clearBtn) clearBtn.classList.remove('hidden');
+            } else {
+                if (labelEl) labelEl.textContent = defaultText;
+                if (clearBtn) clearBtn.classList.add('hidden');
+            }
+        }
+
+        function updateQuickFileLabel(inputEl) {
+            updateFileInputFeedback(inputEl, 'quick-file-label', 'quick-file-clear-btn', '📎 Anexar Imagem, PDF ou Vídeo', '📎 ');
+        }
+
+        function clearQuickFileInput() {
+            const inp = document.getElementById('quick-file-input');
+            if (inp) inp.value = '';
+            updateQuickFileLabel(inp);
+        }
+
+        function updateEditFileLabel(inputEl) {
+            if (inputEl && inputEl.files && inputEl.files[0]) {
+                const rem = document.getElementById('edit-task-remover-anexo');
+                if (rem) rem.value = '0';
+            }
+            updateFileInputFeedback(inputEl, 'edit-file-input-label', 'edit-file-clear-btn', '📎 Substituir ou Adicionar Arquivo (Imagem, PDF ou Vídeo)', '📎 Novo: ');
+        }
+
+        function clearEditFileInput() {
+            const inp = document.getElementById('edit-task-file-input');
+            if (inp) inp.value = '';
+            updateEditFileLabel(inp);
+        }
+
         function openEditTaskModal(task) {
             document.getElementById('edit-task-id').value = task.id;
             document.getElementById('edit-task-titulo').value = task.titulo;
@@ -1814,11 +1927,11 @@ function render_task_card_html(array $task, array $projetos, array $folder_color
             document.getElementById('edit-task-descricao').value = task.descricao_detalhada || '';
             document.getElementById('edit-task-remover-anexo').value = '0';
 
+            clearEditFileInput();
+
             const mediaPreview = document.getElementById('edit-media-preview-container');
             const mediaName = document.getElementById('edit-media-preview-name');
             const mediaLink = document.getElementById('edit-media-preview-link');
-            const fileInputLabel = document.getElementById('edit-file-input-label');
-            if (fileInputLabel) fileInputLabel.textContent = '📎 Substituir ou Adicionar Arquivo (Imagem, PDF ou Vídeo)';
             if (task.anexo && task.anexo.nome_original) {
                 mediaName.textContent = task.anexo.nome_original + (task.anexo.tamanho_formatado ? ' (' + task.anexo.tamanho_formatado + ')' : '');
                 if (mediaLink) {

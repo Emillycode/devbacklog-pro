@@ -495,7 +495,8 @@ function supabase_request(
     string $table,
     string $query = '',
     ?array $payload = null,
-    string $prefer = 'return=representation'
+    string $prefer = 'return=representation',
+    bool $allow_refresh_retry = true
 ): array {
     if (!is_supabase_configured($env) || !function_exists('curl_init')) {
         return ['ok' => false, 'status' => 0, 'data' => null, 'error' => 'Supabase não configurado ou cURL ausente.'];
@@ -520,7 +521,7 @@ function supabase_request(
     curl_setopt($ch, CURLOPT_CUSTOMREQUEST, $method);
     curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    curl_setopt($ch, CURLOPT_TIMEOUT, 12);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 30);
 
     if ($payload !== null) {
         curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
@@ -535,6 +536,19 @@ function supabase_request(
         return ['ok' => false, 'status' => $status, 'data' => null, 'error' => $curl_err];
     }
 
+    // Se o token JWT expirou no Supabase (HTTP 401), tenta renovar automaticamente e repetir 1x
+    if ($status === 401 && $allow_refresh_retry && !empty($_SESSION['supabase_refresh_token'])) {
+        $ref = supabase_auth_refresh_token($env, (string)$_SESSION['supabase_refresh_token']);
+        if ($ref['ok'] && !empty($ref['session']['access_token'])) {
+            $_SESSION['supabase_access_token'] = $ref['session']['access_token'];
+            if (!empty($ref['session']['refresh_token'])) {
+                $_SESSION['supabase_refresh_token'] = $ref['session']['refresh_token'];
+            }
+            $_SESSION['supabase_token_expires_at'] = time() + (int)($ref['session']['expires_in'] ?? 3600);
+            return supabase_request($env, $method, $table, $query, $payload, $prefer, false);
+        }
+    }
+
     $decoded = json_decode($response, true);
     $is_ok = ($status >= 200 && $status < 300);
 
@@ -544,6 +558,44 @@ function supabase_request(
         'data' => $decoded,
         'error' => $is_ok ? null : ($decoded['message'] ?? $response)
     ];
+}
+
+/**
+ * Persiste criação ou atualização de tarefa no Supabase com fallback seguro caso o blob embutido exceda o tamanho da requisição
+ */
+function save_task_to_supabase_with_fallback(
+    array $env,
+    string $method,
+    string $query,
+    array $task_payload,
+    ?string &$error_out = null
+): bool {
+    $error_out = null;
+    $res = supabase_request($env, $method, 'tarefas', $query, $task_payload);
+    if ($res['ok']) {
+        // PostgREST PATCH com RLS às vezes retorna 200 [] se nenhuma linha casou com user_id
+        if ($method === 'PATCH' && is_array($res['data']) && count($res['data']) === 0) {
+            $error_out = 'Permissão negada ou registro não encontrado para este usuário no Supabase.';
+            return false;
+        }
+        return true;
+    }
+
+    if (
+        isset($task_payload['anexo']['conteudo_b64']) &&
+        in_array((int)$res['status'], [0, 400, 413], true)
+    ) {
+        $light_payload = $task_payload;
+        $light_payload['anexo'] = sanitize_anexo_for_ui($task_payload['anexo']);
+        $retry = supabase_request($env, $method, 'tarefas', $query, $light_payload);
+        if ($retry['ok']) {
+            $error_out = 'Aviso: Anexo salvo no servidor, mas era grande demais para réplica embutida no banco.';
+            return true;
+        }
+    }
+
+    $error_out = (string)($res['error'] ?? ('HTTP ' . $res['status']));
+    return false;
 }
 
 // Fuso horário
@@ -773,6 +825,64 @@ function is_authenticated(array $auth_config): bool {
 }
 
 /**
+ * Garante que o arquivo físico exista na pasta uploads/ restaurando da cópia persistida no JSONB se o container reiniciou
+ */
+function restore_media_file_if_missing(?array $anexo): void {
+    if (!is_array($anexo) || empty($anexo['caminho']) || empty($anexo['conteudo_b64'])) {
+        return;
+    }
+
+    $caminho = (string)$anexo['caminho'];
+    if (!preg_match('/^uploads\/[a-zA-Z0-9._-]+\.(jpg|jpeg|jfif|png|webp|gif|bmp|avif|heic|mp4|webm|mov|m4v|pdf)$/i', $caminho) || str_contains($caminho, '..')) {
+        return;
+    }
+
+    $full_path = __DIR__ . '/' . $caminho;
+    if (file_exists($full_path) && filesize($full_path) > 0) {
+        return;
+    }
+
+    $dir = dirname($full_path);
+    if (!is_dir($dir)) {
+        @mkdir($dir, 0775, true);
+    }
+
+    $decoded = base64_decode((string)$anexo['conteudo_b64'], true);
+    if ($decoded === false) {
+        return;
+    }
+
+    if (($anexo['storage'] ?? '') === 'db_gz' && function_exists('gzinflate')) {
+        $inflated = @gzinflate($decoded);
+        if ($inflated !== false) {
+            $decoded = $inflated;
+        }
+    }
+
+    @file_put_contents($full_path, $decoded, LOCK_EX);
+}
+
+/**
+ * Remove o blob base64 pesado do objeto anexo antes de serializar para o DOM/JS
+ */
+function sanitize_anexo_for_ui(?array $anexo): ?array {
+    if (!is_array($anexo)) {
+        return null;
+    }
+    unset($anexo['conteudo_b64'], $anexo['storage']);
+    return $anexo;
+}
+
+function sanitize_tasks_for_ui(array $tarefas): array {
+    return array_map(function($t) {
+        if (isset($t['anexo']) && is_array($t['anexo'])) {
+            $t['anexo'] = sanitize_anexo_for_ui($t['anexo']);
+        }
+        return $t;
+    }, $tarefas);
+}
+
+/**
  * Normaliza arrays de projetos e tarefas
  */
 function normalize_app_data(array $projetos, array $tarefas): array {
@@ -797,6 +907,9 @@ function normalize_app_data(array $projetos, array $tarefas): array {
             $t['anexo'] = null;
         } elseif (is_string($t['anexo'])) {
             $t['anexo'] = json_decode($t['anexo'], true);
+        }
+        if (is_array($t['anexo'])) {
+            restore_media_file_if_missing($t['anexo']);
         }
         if (!empty($t['criado_em']) && str_contains($t['criado_em'], 'T')) {
             $t['criado_em'] = substr(str_replace('T', ' ', $t['criado_em']), 0, 19);
@@ -944,62 +1057,135 @@ function sync_all_to_supabase(array $env, array $data): array {
 }
 
 /**
- * Upload seguro de mídia com validação de extensão e MIME real
+ * Verifica assinatura mágica (magic bytes) para extensões quando finfo retorna application/octet-stream
  */
-function handle_secure_media_upload(array $file_post, string $upload_dir): ?array {
+function verify_media_magic_bytes(string $file_path, string $ext): bool {
+    $fh = @fopen($file_path, 'rb');
+    if (!$fh) {
+        return false;
+    }
+    $head = (string)@fread($fh, 1024);
+    fclose($fh);
+
+    if ($head === '') {
+        return false;
+    }
+
+    return match ($ext) {
+        'pdf' => str_contains($head, '%PDF-'),
+        'jpg', 'jpeg', 'jfif' => str_starts_with($head, "\xFF\xD8\xFF"),
+        'png' => str_starts_with($head, "\x89PNG\r\n\x1A\n"),
+        'gif' => str_starts_with($head, 'GIF87a') || str_starts_with($head, 'GIF89a'),
+        'webp' => str_starts_with($head, 'RIFF') && substr($head, 8, 4) === 'WEBP',
+        'bmp' => str_starts_with($head, 'BM'),
+        'heic', 'avif', 'mp4', 'm4v', 'mov' => str_contains(substr($head, 0, 16), 'ftyp'),
+        'webm' => str_starts_with($head, "\x1A\x45\xDF\xA3"),
+        default => false,
+    };
+}
+
+/**
+ * Upload seguro de mídia com validação de extensão, MIME real e persistência redundante em JSONB (para sobreviver a containers efêmeros)
+ */
+function handle_secure_media_upload(array $file_post, string $upload_dir, ?string &$error_msg = null): ?array {
+    $error_msg = null;
+
     if (!isset($file_post['error']) || $file_post['error'] === UPLOAD_ERR_NO_FILE) {
         return null;
     }
+
     if ($file_post['error'] !== UPLOAD_ERR_OK) {
+        $error_msg = match ((int)$file_post['error']) {
+            UPLOAD_ERR_INI_SIZE, UPLOAD_ERR_FORM_SIZE => 'O arquivo excede o tamanho máximo aceito pelo servidor (' . ini_get('upload_max_filesize') . ').',
+            UPLOAD_ERR_PARTIAL => 'O envio do arquivo foi interrompido antes de concluir. Tente novamente.',
+            UPLOAD_ERR_NO_TMP_DIR => 'Diretório temporário ausente no servidor para receber o arquivo.',
+            UPLOAD_ERR_CANT_WRITE => 'Sem permissão para gravar o arquivo enviado no servidor.',
+            default => 'Erro no upload do arquivo (código ' . (int)$file_post['error'] . ').',
+        };
         return null;
     }
 
     $max_bytes = 25 * 1024 * 1024;
     if ((int)$file_post['size'] > $max_bytes) {
+        $error_msg = 'O arquivo ultrapassa o limite máximo de 25 MB.';
         return null;
     }
 
-    $allowed_extensions = ['jpg', 'jpeg', 'png', 'webp', 'gif', 'mp4', 'webm', 'mov', 'pdf'];
-    $original_name = basename($file_post['name']);
+    $image_exts = ['jpg', 'jpeg', 'jfif', 'png', 'webp', 'gif', 'bmp', 'avif', 'heic'];
+    $video_exts = ['mp4', 'webm', 'mov', 'm4v'];
+    $allowed_extensions = array_merge($image_exts, $video_exts, ['pdf']);
+
+    $original_name = basename((string)$file_post['name']);
     $ext = strtolower(pathinfo($original_name, PATHINFO_EXTENSION));
 
-    if (!in_array($ext, $allowed_extensions, true)) {
+    if ($ext === '' || !in_array($ext, $allowed_extensions, true)) {
+        $error_msg = "Formato '.{$ext}' não suportado. Use imagens (JPG, PNG, WEBP, GIF, BMP, HEIC), PDF ou vídeos (MP4, WEBM, MOV).";
         return null;
     }
 
+    $mime = '';
     if (function_exists('finfo_open')) {
         $finfo = finfo_open(FILEINFO_MIME_TYPE);
-        $mime = $finfo ? finfo_file($finfo, $file_post['tmp_name']) : '';
+        $mime = $finfo ? (string)finfo_file($finfo, $file_post['tmp_name']) : '';
         if ($finfo) finfo_close($finfo);
 
         $allowed_mimes = [
-            'image/jpeg', 'image/png', 'image/webp', 'image/gif',
-            'video/mp4', 'video/webm', 'video/quicktime', 'application/pdf'
+            'image/jpeg', 'image/pjpeg', 'image/png', 'image/x-png', 'image/webp',
+            'image/gif', 'image/bmp', 'image/x-ms-bmp', 'image/avif', 'image/heic', 'image/heif',
+            'video/mp4', 'video/webm', 'video/quicktime', 'video/x-m4v',
+            'application/pdf', 'application/x-pdf', 'application/acrobat', 'applications/vnd.pdf', 'text/pdf', 'text/x-pdf'
         ];
-        if ($mime && !in_array($mime, $allowed_mimes, true)) {
-            return null;
+        if ($mime !== '' && !in_array($mime, $allowed_mimes, true)) {
+            $is_generic_mime = in_array($mime, ['application/octet-stream', 'application/binary', 'text/plain'], true);
+            if (!$is_generic_mime || !verify_media_magic_bytes($file_post['tmp_name'], $ext)) {
+                $error_msg = "Tipo de arquivo inválido ({$mime}) para a extensão .{$ext}.";
+                return null;
+            }
         }
     }
 
-    $tipo = ($ext === 'pdf') ? 'pdf' : (in_array($ext, ['mp4', 'webm', 'mov'], true) ? 'video' : 'imagem');
-    $safe_name = 'media_' . bin2hex(random_bytes(8)) . '.' . $ext;
-    $target_path = $upload_dir . '/' . $safe_name;
-
-    if (!move_uploaded_file($file_post['tmp_name'], $target_path)) {
+    if (!is_dir($upload_dir) && !@mkdir($upload_dir, 0775, true)) {
+        $error_msg = 'Não foi possível criar a pasta uploads no servidor.';
         return null;
     }
 
-    $bytes = (int)$file_post['size'];
+    $tipo = ($ext === 'pdf') ? 'pdf' : (in_array($ext, $video_exts, true) ? 'video' : 'imagem');
+    $safe_name = 'media_' . bin2hex(random_bytes(8)) . '.' . $ext;
+    $target_path = rtrim($upload_dir, '/\\') . '/' . $safe_name;
+
+    if (!@move_uploaded_file($file_post['tmp_name'], $target_path)) {
+        $error_msg = 'Falha ao gravar o arquivo na pasta de uploads (verifique permissões de escrita).';
+        return null;
+    }
+
+    $bytes = (int)filesize($target_path);
     $formatted_size = ($bytes >= 1048576)
         ? number_format($bytes / 1048576, 1) . ' MB'
         : max(1, (int)round($bytes / 1024)) . ' KB';
 
-    return [
+    $anexo = [
         'nome_original' => $original_name,
         'caminho' => 'uploads/' . $safe_name,
         'tipo' => $tipo,
         'tamanho_formatado' => $formatted_size
     ];
+
+    // Guarda cópia em JSONB para arquivos de até 4 MB (garante persistência no Supabase mesmo se o container Render reiniciar)
+    if ($bytes > 0 && $bytes <= 4 * 1024 * 1024) {
+        $raw_content = @file_get_contents($target_path);
+        if ($raw_content !== false) {
+            $compressed = function_exists('gzdeflate') ? @gzdeflate($raw_content, 6) : false;
+            if ($compressed !== false && strlen($compressed) < strlen($raw_content)) {
+                $anexo['storage'] = 'db_gz';
+                $anexo['conteudo_b64'] = base64_encode($compressed);
+            } else {
+                $anexo['storage'] = 'db_raw';
+                $anexo['conteudo_b64'] = base64_encode($raw_content);
+            }
+        }
+    }
+
+    return $anexo;
 }
 
 // ============================================================================
@@ -1015,8 +1201,18 @@ if (basename($_SERVER['SCRIPT_FILENAME'] ?? '') === 'api.php') {
     $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
     $action = $_GET['action'] ?? ($_POST['action'] ?? '');
 
-    $json_body = [];
     $content_type = $_SERVER['CONTENT_TYPE'] ?? '';
+    $content_length = (int)($_SERVER['CONTENT_LENGTH'] ?? 0);
+    if ($method === 'POST' && empty($_POST) && empty($_FILES) && $content_length > 0 && stripos($content_type, 'application/json') === false) {
+        http_response_code(413);
+        echo json_encode([
+            'ok' => false,
+            'error' => 'O arquivo enviado ultrapassou o limite máximo do servidor (' . ini_get('post_max_size') . ').'
+        ]);
+        exit;
+    }
+
+    $json_body = [];
     if (stripos($content_type, 'application/json') !== false) {
         $raw_input = file_get_contents('php://input');
         if ($raw_input) {
@@ -1068,7 +1264,7 @@ if (basename($_SERVER['SCRIPT_FILENAME'] ?? '') === 'api.php') {
             'is_default_password' => (bool)($auth_config['is_default_password'] ?? false),
             'csrf_token' => get_csrf_token(),
             'projetos' => $data['projetos'],
-            'tarefas' => $data['tarefas']
+            'tarefas' => sanitize_tasks_for_ui($data['tarefas'])
         ]);
         exit;
     }
@@ -1137,7 +1333,7 @@ if (basename($_SERVER['SCRIPT_FILENAME'] ?? '') === 'api.php') {
                 'is_default_password' => (bool)($auth_config['is_default_password'] ?? false),
                 'csrf_token' => get_csrf_token(),
                 'projetos' => $data['projetos'],
-                'tarefas' => $data['tarefas']
+                'tarefas' => sanitize_tasks_for_ui($data['tarefas'])
             ]);
             exit;
         }
@@ -1254,7 +1450,7 @@ if (basename($_SERVER['SCRIPT_FILENAME'] ?? '') === 'api.php') {
             'ok' => true,
             'message' => 'Todos os projetos e ideias foram sincronizados com o Supabase!',
             'projetos' => $fresh['projetos'],
-            'tarefas' => $fresh['tarefas']
+            'tarefas' => sanitize_tasks_for_ui($fresh['tarefas'])
         ]);
         exit;
     }
@@ -1299,7 +1495,7 @@ if (basename($_SERVER['SCRIPT_FILENAME'] ?? '') === 'api.php') {
             'ok' => true,
             'project' => $new_proj,
             'projetos' => $data['projetos'],
-            'tarefas' => $data['tarefas']
+            'tarefas' => sanitize_tasks_for_ui($data['tarefas'])
         ]);
         exit;
     }
@@ -1318,7 +1514,7 @@ if (basename($_SERVER['SCRIPT_FILENAME'] ?? '') === 'api.php') {
         echo json_encode([
             'ok' => true,
             'projetos' => $data['projetos'],
-            'tarefas' => $data['tarefas']
+            'tarefas' => sanitize_tasks_for_ui($data['tarefas'])
         ]);
         exit;
     }
@@ -1349,8 +1545,14 @@ if (basename($_SERVER['SCRIPT_FILENAME'] ?? '') === 'api.php') {
         }
 
         $anexo = null;
+        $upload_err = null;
         if (isset($_FILES['anexo'])) {
-            $anexo = handle_secure_media_upload($_FILES['anexo'], $UPLOAD_DIR);
+            $anexo = handle_secure_media_upload($_FILES['anexo'], $UPLOAD_DIR, $upload_err);
+            if ($upload_err !== null) {
+                http_response_code(400);
+                echo json_encode(['ok' => false, 'error' => $upload_err]);
+                exit;
+            }
         }
 
         $new_task = [
@@ -1365,23 +1567,30 @@ if (basename($_SERVER['SCRIPT_FILENAME'] ?? '') === 'api.php') {
             'anexo' => $anexo
         ];
 
+        $warning = null;
         if ($supabase_active) {
             $sb_task = $new_task;
             $sb_task['data_limite'] = $data_limite !== '' ? $data_limite : null;
             if (($current_auth_user['provider'] ?? '') === 'supabase') {
                 $sb_task['user_id'] = $current_auth_user['id'];
             }
-            supabase_request($ENV, 'POST', 'tarefas', '', $sb_task);
+            save_task_to_supabase_with_fallback($ENV, 'POST', '', $sb_task, $warning);
         }
 
         array_unshift($data['tarefas'], $new_task);
         save_local_json($DATA_FILE, $data);
 
+        $ui_task = $new_task;
+        if (is_array($ui_task['anexo'])) {
+            $ui_task['anexo'] = sanitize_anexo_for_ui($ui_task['anexo']);
+        }
+
         echo json_encode([
             'ok' => true,
-            'task' => $new_task,
+            'warning' => $warning,
+            'task' => $ui_task,
             'projetos' => $data['projetos'],
-            'tarefas' => $data['tarefas']
+            'tarefas' => sanitize_tasks_for_ui($data['tarefas'])
         ]);
         exit;
     }
@@ -1417,7 +1626,7 @@ if (basename($_SERVER['SCRIPT_FILENAME'] ?? '') === 'api.php') {
         echo json_encode([
             'ok' => true,
             'projetos' => $data['projetos'],
-            'tarefas' => $data['tarefas']
+            'tarefas' => sanitize_tasks_for_ui($data['tarefas'])
         ]);
         exit;
     }
@@ -1437,9 +1646,27 @@ if (basename($_SERVER['SCRIPT_FILENAME'] ?? '') === 'api.php') {
             $prioridade = 'Média';
         }
 
+        $warning = null;
         if ($task_id !== '' && $titulo !== '') {
             foreach ($data['tarefas'] as &$task) {
                 if ($task['id'] === $task_id) {
+                    if (isset($_FILES['anexo'])) {
+                        $upload_err = null;
+                        $novo_anexo = handle_secure_media_upload($_FILES['anexo'], $UPLOAD_DIR, $upload_err);
+                        if ($upload_err !== null) {
+                            http_response_code(400);
+                            echo json_encode(['ok' => false, 'error' => $upload_err]);
+                            exit;
+                        }
+                        if ($novo_anexo) {
+                            $task['anexo'] = $novo_anexo;
+                        } elseif ($remover_anexo) {
+                            $task['anexo'] = null;
+                        }
+                    } elseif ($remover_anexo) {
+                        $task['anexo'] = null;
+                    }
+
                     $task['titulo'] = $titulo;
                     $task['descricao_detalhada'] = $descricao_detalhada;
                     $task['prioridade'] = $prioridade;
@@ -1450,21 +1677,11 @@ if (basename($_SERVER['SCRIPT_FILENAME'] ?? '') === 'api.php') {
                     if (in_array($status, ['pendente', 'em_andamento', 'concluido'], true)) {
                         $task['status'] = $status;
                     }
-                    if ($remover_anexo) {
-                        $task['anexo'] = null;
-                    }
-                    if (isset($_FILES['anexo']) && $_FILES['anexo']['error'] === UPLOAD_ERR_OK) {
-                        $novo_anexo = handle_secure_media_upload($_FILES['anexo'], $UPLOAD_DIR);
-                        if ($novo_anexo) {
-                            $task['anexo'] = $novo_anexo;
-                        }
-                    }
 
                     if ($supabase_active) {
-                        supabase_request(
+                        save_task_to_supabase_with_fallback(
                             $ENV,
                             'PATCH',
-                            'tarefas',
                             'id=eq.' . rawurlencode($task_id),
                             [
                                 'id_projeto' => $task['id_projeto'],
@@ -1474,7 +1691,8 @@ if (basename($_SERVER['SCRIPT_FILENAME'] ?? '') === 'api.php') {
                                 'status' => $task['status'],
                                 'data_limite' => $task['data_limite'] !== '' ? $task['data_limite'] : null,
                                 'anexo' => $task['anexo']
-                            ]
+                            ],
+                            $warning
                         );
                     }
                     break;
@@ -1486,8 +1704,9 @@ if (basename($_SERVER['SCRIPT_FILENAME'] ?? '') === 'api.php') {
 
         echo json_encode([
             'ok' => true,
+            'warning' => $warning,
             'projetos' => $data['projetos'],
-            'tarefas' => $data['tarefas']
+            'tarefas' => sanitize_tasks_for_ui($data['tarefas'])
         ]);
         exit;
     }
@@ -1505,7 +1724,7 @@ if (basename($_SERVER['SCRIPT_FILENAME'] ?? '') === 'api.php') {
         echo json_encode([
             'ok' => true,
             'projetos' => $data['projetos'],
-            'tarefas' => $data['tarefas']
+            'tarefas' => sanitize_tasks_for_ui($data['tarefas'])
         ]);
         exit;
     }
@@ -1531,7 +1750,7 @@ if (basename($_SERVER['SCRIPT_FILENAME'] ?? '') === 'api.php') {
         echo json_encode([
             'ok' => true,
             'projetos' => $fresh['projetos'],
-            'tarefas' => $fresh['tarefas']
+            'tarefas' => sanitize_tasks_for_ui($fresh['tarefas'])
         ]);
         exit;
     }
